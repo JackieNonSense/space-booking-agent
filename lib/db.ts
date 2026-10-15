@@ -26,6 +26,22 @@ export function neonDb(url: string): Db {
   };
 }
 
+/**
+ * Applies the idempotent schema once per server instance, so a fresh database
+ * needs no manual setup step. Two instances starting at once can race on
+ * CREATE ... IF NOT EXISTS; "already exists" errors from that race are fine.
+ */
+export async function withSchema(db: Db): Promise<Db> {
+  for (const statement of splitStatements(SCHEMA_SQL)) {
+    try {
+      await db.query(statement);
+    } catch (err) {
+      if (!["42P07", "42710", PG_UNIQUE_VIOLATION].includes(pgErrorCode(err) ?? "")) throw err;
+    }
+  }
+  return db;
+}
+
 export async function pgliteDb(dataDir = "memory://"): Promise<Db> {
   const [{ PGlite }, { btree_gist }] = await Promise.all([
     import("@electric-sql/pglite"),
@@ -54,7 +70,7 @@ export function getDb(): Promise<Db> {
   }
   globalForDb.__db ??= (
     process.env.DATABASE_URL
-      ? Promise.resolve(neonDb(process.env.DATABASE_URL))
+      ? withSchema(neonDb(process.env.DATABASE_URL))
       : pgliteDb(process.env.PGLITE_DIR ?? "./.data/pglite")
   ).catch((err) => {
     globalForDb.__db = undefined; // let the next request retry

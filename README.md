@@ -65,7 +65,7 @@ npm run dev                  # http://localhost:3000
 
 Without `DATABASE_URL` the app uses an embedded Postgres (PGlite) in `.data/`. Without `RESEND_API_KEY`, emails are logged instead of sent and can be previewed from the chat.
 
-To deploy: create a Neon Postgres database, set the variables from `.env.example` in Vercel, run `npm run db:setup` once against the database, and deploy.
+To deploy: import the repo into Vercel, add a Neon Postgres database from the Storage tab (it sets `DATABASE_URL`), add the other variables from `.env.example`, and deploy. Tables and demo bookings are created on first use. Functions run in Sydney (`vercel.json`).
 
 ## Project layout
 
