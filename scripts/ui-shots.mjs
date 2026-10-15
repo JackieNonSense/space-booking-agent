@@ -29,19 +29,24 @@ try {
   await shot(desktop, "01-empty");
 
   await send(desktop, "Hi, I'd like to book Room B this Friday from 2pm to 6pm. I'm Jane Citizen, jane@example.com");
-  await desktop.getByRole("button", { name: "Confirm booking" }).waitFor({ timeout: 90_000 });
+  const confirm = desktop.getByRole("button", { name: /^Confirm/ });
+  await confirm.waitFor({ timeout: 90_000 });
+  await desktop.waitForFunction(() => !document.querySelector('[aria-label="Assistant is typing"]'), null, { timeout: 90_000 });
   await desktop.waitForTimeout(1200);
   await shot(desktop, "02-quote");
 
-  await desktop.getByRole("button", { name: "Confirm booking" }).click();
+  await confirm.click();
   await desktop.getByText("Booking confirmed").waitFor({ timeout: 90_000 });
   await desktop.waitForFunction(() => !document.querySelector('[aria-label="Assistant is typing"]'), null, { timeout: 90_000 });
   await desktop.waitForTimeout(1500);
   await shot(desktop, "03-confirmed");
 
-  await desktop.getByRole("switch").click();
+  // Expand the first step to show the layered trace.
+  await desktop.getByRole("button", { name: /Checked availability/ }).first().click();
   await desktop.waitForTimeout(400);
-  await shot(desktop, "04-trace");
+  await desktop.getByRole("button", { name: /Checked availability/ }).first().scrollIntoViewIfNeeded();
+  await shot(desktop, "04-step-detail");
+  await desktop.locator("aside").screenshot({ path: join(outDir, "04b-panel.png") });
 
   // Mobile: conflict handling and the schedule tab.
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
@@ -55,7 +60,7 @@ try {
   await mobile.waitForTimeout(1200);
   await shot(mobile, "06-mobile-conflict");
 
-  await mobile.getByRole("tab", { name: /schedule/i }).click();
+  await mobile.getByRole("button", { name: /Booking & schedule/ }).click();
   await mobile.waitForTimeout(600);
   await shot(mobile, "07-mobile-schedule");
   console.log(`saved to ${outDir}`);

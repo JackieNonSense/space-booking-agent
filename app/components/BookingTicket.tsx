@@ -2,19 +2,15 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
-import type { BookingProgress } from "./derive";
+import { describeStep, type BookingProgress, type ToolPart } from "./derive";
 import { CalendarIcon, ClockIcon, DoorIcon, ExternalIcon, MailIcon, UserIcon } from "./icons";
 import { EASE, pressable } from "./motion";
+import { StepIcon } from "./StepRow";
 
-const STEPS = ["Date & time", "Room", "Your details", "Confirmed"] as const;
+const STEPS = ["Date & time", "Room", "Details", "Confirmed"] as const;
 
 function stepsDone(p: BookingProgress): boolean[] {
-  return [
-    Boolean(p.time),
-    Boolean(p.roomName),
-    Boolean(p.customerName && p.customerEmail),
-    p.stage === "booked",
-  ];
+  return [Boolean(p.time), Boolean(p.roomName), Boolean(p.customerName && p.customerEmail), p.stage === "booked"];
 }
 
 const STATUS: Record<BookingProgress["stage"], string> = {
@@ -25,14 +21,14 @@ const STATUS: Record<BookingProgress["stage"], string> = {
   booked: "Confirmed",
 };
 
-/** A value that animates when it first appears or changes. */
-function Value({ value, placeholder = "—" }: { value?: string; placeholder?: string }) {
+/** A value that animates in when it first appears or changes. */
+function Value({ value, placeholder = "—", className = "" }: { value?: string; placeholder?: string; className?: string }) {
   return (
-    <span className="relative block min-h-5 overflow-hidden text-right">
+    <span className={`relative block min-h-5 overflow-hidden text-right ${className}`}>
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.span
           key={value ?? "__empty"}
-          className={`block truncate ${value ? "text-ink" : "text-faint"}`}
+          className={`num block truncate ${value ? "text-fg" : "text-fg-3"}`}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -10 }}
@@ -47,27 +43,32 @@ function Value({ value, placeholder = "—" }: { value?: string; placeholder?: s
 
 function Field({ icon, label, value }: { icon: ReactNode; label: string; value?: string }) {
   return (
-    <div className="grid grid-cols-[1.25rem_5.5rem_minmax(0,1fr)] items-center gap-2 py-1.5 text-sm">
-      <span className={value ? "text-accent" : "text-faint"}>{icon}</span>
-      <span className="text-muted">{label}</span>
-      <Value value={value} />
+    <div className="grid grid-cols-[1.25rem_5rem_minmax(0,1fr)] items-center gap-2 py-[7px] text-sm">
+      <span className={`transition-colors ${value ? "text-fg" : "text-fg-3"}`}>{icon}</span>
+      <span className="text-fg-2">{label}</span>
+      <Value value={value} className="font-medium" />
     </div>
   );
 }
 
-export function BookingTicket({ progress }: { progress: BookingProgress }) {
+// Studio time, like every other time on the page.
+const clock = (t: number) =>
+  new Date(t).toLocaleTimeString("en-AU", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "Australia/Sydney",
+  });
+
+export function BookingTicket({ progress, steps }: { progress: BookingProgress; steps: ToolPart[] }) {
   const done = stepsDone(progress);
   const current = done.findIndex((d) => !d);
-  const completed = current === -1 ? STEPS.length : current;
   const booked = progress.stage === "booked";
 
   return (
-    <section
-      className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-[0_1px_2px_rgba(43,38,34,0.04),0_12px_32px_-16px_rgba(43,38,34,0.18)]"
-      aria-labelledby="ticket-heading"
-    >
+    <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card" aria-labelledby="ticket-heading">
       <div className="flex items-center justify-between gap-3 px-4 pt-4">
-        <h2 id="ticket-heading" className="font-serif text-lg font-semibold text-ink">
+        <h2 id="ticket-heading" className="font-serif text-xl font-semibold text-fg">
           Your booking
         </h2>
         <AnimatePresence mode="popLayout" initial={false}>
@@ -78,7 +79,7 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
             exit={{ opacity: 0, scale: 0.9 }}
             transition={{ duration: 0.2 }}
             className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-              booked ? "bg-ok-soft text-ok" : progress.stage === "idle" ? "bg-paper text-muted" : "bg-accent-soft text-accent-strong"
+              booked ? "bg-ok-soft text-ok" : progress.stage === "idle" ? "bg-hover text-fg-2" : "bg-brand-soft text-brand-strong"
             }`}
           >
             {STATUS[progress.stage]}
@@ -86,31 +87,29 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
         </AnimatePresence>
       </div>
 
-      {/* Progress */}
-      <div className="px-4 pt-3.5">
-        <div className="relative h-1 overflow-hidden rounded-full bg-paper">
-          <motion.div
-            className={`absolute inset-y-0 left-0 rounded-full ${booked ? "bg-ok" : "bg-accent"}`}
-            initial={false}
-            animate={{ width: `${(completed / STEPS.length) * 100}%` }}
-            transition={{ duration: 0.5, ease: EASE }}
-          />
-        </div>
-        <ol className="mt-2 grid grid-cols-4 gap-1 text-[11px]">
-          {STEPS.map((label, i) => (
-            <li
-              key={label}
-              className={`transition-colors duration-300 ${
-                done[i] ? "font-medium text-ink" : i === current ? "text-accent-strong" : "text-faint"
-              }`}
+      {/* Progress: four segments, one per step */}
+      <ol className="mt-3.5 grid grid-cols-4 gap-1.5 px-4" aria-label="Booking progress">
+        {STEPS.map((label, i) => (
+          <li key={label}>
+            <div className="h-1 overflow-hidden rounded-full bg-hover">
+              <motion.div
+                className={`h-full rounded-full ${booked ? "bg-ok" : "bg-ink"}`}
+                initial={false}
+                animate={{ width: done[i] ? "100%" : "0%" }}
+                transition={{ duration: 0.45, ease: EASE }}
+              />
+            </div>
+            <div
+              className={`mt-1.5 truncate text-xs ${done[i] ? "font-medium text-fg" : i === current ? "font-medium text-brand" : "text-fg-3"}`}
             >
               {label}
-            </li>
-          ))}
-        </ol>
-      </div>
+              <span className="sr-only">{done[i] ? " (done)" : i === current ? " (in progress)" : ""}</span>
+            </div>
+          </li>
+        ))}
+      </ol>
 
-      <div className="px-4 pt-2">
+      <div className="mt-2 divide-y divide-line px-4">
         <Field icon={<CalendarIcon className="h-4 w-4" />} label="Date" value={progress.dateLabel} />
         <Field icon={<ClockIcon className="h-4 w-4" />} label="Time" value={progress.time} />
         <Field icon={<ClockIcon className="h-4 w-4 opacity-0" />} label="Duration" value={progress.duration} />
@@ -119,32 +118,28 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
         <Field icon={<MailIcon className="h-4 w-4" />} label="Email" value={progress.customerEmail} />
       </div>
 
-      <div className="relative my-3" aria-hidden>
-        <div className="mx-4 border-t border-dashed border-line" />
-        <span className="absolute -left-2 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-line bg-paper" />
-        <span className="absolute -right-2 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border border-line bg-paper" />
-      </div>
-
-      <div className="flex items-end justify-between gap-3 px-4 pb-4">
+      <div className="mx-4 mb-4 mt-2 flex items-end justify-between gap-3 rounded-xl bg-inset px-3.5 py-3">
         <div className="shrink-0">
-          <div className="text-xs text-muted">Total</div>
-          {progress.discountApplied && (
-            <motion.div
-              initial={{ opacity: 0, x: -4 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="mt-0.5 text-xs font-medium text-ok"
-            >
-              15% off for 4+ hours
-            </motion.div>
-          )}
+          <div className="text-sm font-semibold text-fg">Total</div>
+          <AnimatePresence>
+            {progress.discountApplied && (
+              <motion.div
+                initial={{ opacity: 0, x: -4 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0 }}
+                className="mt-0.5 text-xs font-medium text-ok"
+              >
+                15% off for 4+ hours
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-        {/* Stamp */}
         <AnimatePresence>
           {booked && (
             <motion.span
               key="stamp"
               aria-hidden
-              className="mb-1 rounded-md border-2 border-ok/70 px-2 py-0.5 font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-ok/80"
+              className="mb-1 rounded-md border-2 border-brand px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.18em] text-brand"
               initial={{ opacity: 0, scale: 1.5, rotate: -16 }}
               animate={{ opacity: 1, scale: 1, rotate: -8 }}
               exit={{ opacity: 0 }}
@@ -154,7 +149,7 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
             </motion.span>
           )}
         </AnimatePresence>
-        <span className="font-serif text-3xl font-semibold tracking-tight">
+        <span className="font-serif text-[28px] font-semibold leading-none tracking-tight">
           <Value value={progress.total} placeholder="$—" />
         </span>
       </div>
@@ -167,19 +162,21 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.35, ease: EASE }}
-            className="border-t border-line bg-ok-soft/60"
+            className="border-t border-ok-border bg-ok-soft"
           >
-            <div className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="min-w-0">
-                <div className="font-medium text-ok">Reference {progress.refCode}</div>
-                <div className="truncate text-xs text-muted">
+                <div className="text-sm font-semibold text-ok">
+                  Reference <span className="font-mono">{progress.refCode}</span>
+                </div>
+                <div className="truncate text-xs text-fg-2">
                   {progress.email
                     ? progress.email.status === "failed"
                       ? "The confirmation email couldn't be sent"
                       : progress.email.status === "dry_run"
                         ? "Email ready (not sent from this test server)"
                         : `Confirmation sent to ${progress.email.to}`
-                    : "Sending confirmation email…"}
+                    : "Sending the confirmation email…"}
                 </div>
               </div>
               {progress.bookingId && progress.email && progress.email.status !== "failed" && (
@@ -188,9 +185,10 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
                   href={`/api/bookings/${progress.bookingId}/email`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex shrink-0 items-center gap-1 rounded-lg border border-ok/30 bg-surface px-2.5 py-1 text-xs font-medium text-ok"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-ok-border bg-surface px-2.5 py-1.5 text-xs font-medium text-ok"
                 >
                   View email <ExternalIcon className="h-3.5 w-3.5" />
+                  <span className="sr-only"> (opens in a new tab)</span>
                 </motion.a>
               )}
             </div>
@@ -198,6 +196,47 @@ export function BookingTicket({ progress }: { progress: BookingProgress }) {
         )}
       </AnimatePresence>
 
+      {/* Activity: every step the agent took, as a record */}
+      <div className="border-t border-line px-4 pb-3 pt-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-[13px] font-semibold text-fg">Activity</h3>
+          <span className="num text-xs text-fg-3">
+            {steps.length} step{steps.length === 1 ? "" : "s"}
+          </span>
+        </div>
+        {steps.length === 0 ? (
+          <p className="mt-1.5 text-[13px] text-fg-3">Each check, quote and booking the assistant makes will be listed here.</p>
+        ) : (
+          <ol className="relative mt-2 space-y-2.5 before:absolute before:bottom-1 before:left-[7px] before:top-1 before:w-px before:bg-line">
+            <AnimatePresence initial={false}>
+              {steps.slice(-8).map((p) => {
+                const step = describeStep(p);
+                return (
+                  <motion.li
+                    key={p.id}
+                    layout
+                    initial={{ opacity: 0, x: -6 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.25, ease: EASE }}
+                    className="relative flex gap-2.5"
+                  >
+                    <span className="relative z-10 mt-0.5 rounded-full bg-surface">
+                      <StepIcon tone={step.tone} />
+                    </span>
+                    <div className="min-w-0 flex-1 text-[13px]">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-medium text-fg">{step.title}</span>
+                        <span className="num shrink-0 text-xs text-fg-3">{clock(p.at)}</span>
+                      </div>
+                      {step.detail && <div className="num truncate text-xs text-fg-3">{step.detail}</div>}
+                    </div>
+                  </motion.li>
+                );
+              })}
+            </AnimatePresence>
+          </ol>
+        )}
+      </div>
     </section>
   );
 }
@@ -212,24 +251,22 @@ export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress;
       onClick={onOpen}
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex w-full items-center gap-3 border-b border-line bg-surface/90 px-4 py-2 text-left text-xs backdrop-blur lg:hidden"
+      className="flex w-full items-center gap-3 border-b border-line bg-surface px-4 py-2.5 text-left text-[13px] lg:hidden"
     >
       <span className="flex gap-1" aria-hidden>
         {done.map((d, i) => (
-          <motion.span
+          <span
             key={i}
-            className="h-1.5 w-5 rounded-full"
-            initial={false}
-            animate={{ backgroundColor: d ? (progress.stage === "booked" ? "#3f7a52" : "#8a6d4b") : "#e8e1d6" }}
+            className={`h-1.5 w-5 rounded-full transition-colors ${d ? (progress.stage === "booked" ? "bg-ok" : "bg-ink") : "bg-hover"}`}
           />
         ))}
       </span>
-      <span className="flex-1 truncate text-muted">
-        {STATUS[progress.stage]}
+      <span className="num flex-1 truncate text-fg-2">
+        <span className="font-medium text-fg">{STATUS[progress.stage]}</span>
         {progress.roomName ? ` · ${progress.roomName}` : ""}
         {progress.dateLabel ? ` · ${progress.dateLabel}` : ""}
       </span>
-      {progress.total && <span className="font-semibold text-ink">{progress.total}</span>}
+      {progress.total && <span className="num font-semibold text-fg">{progress.total}</span>}
     </motion.button>
   );
 }

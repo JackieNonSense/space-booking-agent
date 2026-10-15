@@ -25,7 +25,7 @@ export function RichText({ text }: { text: string }) {
           return (
             <ul key={i} className="space-y-1 pl-4">
               {lines.map((l, j) => (
-                <li key={j} className="list-disc marker:text-faint">
+                <li key={j} className="list-disc marker:text-fg-3">
                   {inline(l.replace(/^\s*([-*•]|\d+\.)\s+/, ""))}
                 </li>
               ))}

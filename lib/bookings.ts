@@ -72,6 +72,9 @@ export interface Alternative {
   start: string;
   end: string;
   label: string;
+  /** Same length as requested, so the same price; shown so options are comparable. */
+  duration: string;
+  total: string;
 }
 
 interface BookingRow {
@@ -202,6 +205,7 @@ export function suggestAlternatives(
 ): Alternative[] {
   const duration = wanted.endMinute - wanted.startMinute;
   const from = earliestStart(wanted.date, now);
+  const price = calculatePrice(duration);
   const make = (room: RoomId, s: number): Alternative => ({
     room,
     roomName: ROOMS[room].name,
@@ -209,6 +213,8 @@ export function suggestAlternatives(
     start: clock(s),
     end: clock(s + duration),
     label: `${ROOMS[room].name}, ${clockLabel(s)} – ${clockLabel(s + duration)}`,
+    duration: formatHours(duration / 60),
+    total: formatMoney(price.totalCents),
   });
   const fits = (room: RoomId, s: number) =>
     s >= from &&

@@ -5,12 +5,12 @@ export const alt = "Room Booking Assistant: chat to check availability, get an e
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
-const INK = "#2b2622";
-const PAPER = "#f7f4ef";
-const ACCENT = "#8a6d4b";
-const MUTED = "#6b6257";
-const LINE = "#e8e1d6";
-const OK = "#3f7a52";
+const INK = "#1a1714";
+const PAPER = "#f7f6f3";
+const ACCENT = "#7a5320";
+const MUTED = "#4a433b";
+const LINE = "#e4e0d8";
+const OK = "#1f7a4d";
 
 function Arch({ size: s, color }: { size: number; color: string }) {
   return (

@@ -6,6 +6,8 @@ export type Part =
       name: string;
       input: unknown;
       automatic?: boolean;
+      /** Client clock when the call was announced, for the activity log. */
+      at: number;
       result?: { ok: boolean; data: Record<string, unknown>; ms: number };
     };
 
@@ -51,4 +53,6 @@ export interface Alternative {
   start: string;
   end: string;
   label: string;
+  duration: string;
+  total: string;
 }

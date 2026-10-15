@@ -101,7 +101,13 @@ const SCENARIOS: Scenario[] = [
       return [
         ...expect(!!avail, "did not check availability"),
         ...expect(/room b/i.test(turns[0].reply), "did not offer Room B"),
-        ...expect(!/room a is (free|available)/i.test(turns[0].reply), "claimed Room A is free"),
+        ...expect(/(isn't|is not|not) (free|available)|booked|taken|unavailable/i.test(turns[0].reply), "did not say Room A is taken"),
+        // "Room A is free from 4pm" describes an alternative and is fine; a bare
+        // "Room A is free" for the requested slot is not.
+        ...expect(
+          !/room a (is|'s) (free|available)(?! (also )?(from|between|after|before|later|earlier|at|until))/i.test(turns[0].reply),
+          "claimed Room A is free for the requested slot",
+        ),
       ];
     },
   },

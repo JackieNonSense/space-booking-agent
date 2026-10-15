@@ -127,3 +127,91 @@ export function quoteStates(parts: ToolPart[]): Map<string, QuoteState> {
   });
   return states;
 }
+
+// ---------------------------------------------------------------------------
+// Plain-language step summaries for the chat and the activity log
+
+export type StepTone = "running" | "ok" | "error" | "info";
+
+export interface StepSummary {
+  tone: StepTone;
+  title: string;
+  detail?: string;
+}
+
+function shortTime(start?: unknown, end?: unknown) {
+  return typeof start === "string" && typeof end === "string" ? `${clockLabel(start)} – ${clockLabel(end)}` : undefined;
+}
+
+export function describeStep(p: ToolPart): StepSummary {
+  const running: Record<string, string> = {
+    check_availability: "Checking availability",
+    calculate_price: "Calculating the price",
+    create_booking_draft: "Preparing a quote",
+    confirm_booking: "Booking the room",
+    send_confirmation_email: "Sending the confirmation",
+  };
+  if (!p.result) return { tone: "running", title: running[p.name] ?? "Working" };
+
+  const d = p.result.data as Data;
+  const join = (...xs: Array<string | undefined>) => xs.filter(Boolean).join(" · ");
+
+  if (!p.result.ok) {
+    const code = s(d.error_code);
+    const message = s(d.message);
+    if (code === "NEEDS_USER_CONFIRMATION") {
+      return { tone: "info", title: "Held the booking for your confirmation", detail: "Nothing is booked until you accept the quote" };
+    }
+    if (code === "ROOM_UNAVAILABLE") return { tone: "error", title: "Room not available", detail: message };
+    const failed: Record<string, string> = {
+      check_availability: "Couldn't check availability",
+      calculate_price: "Couldn't calculate the price",
+      create_booking_draft: "Couldn't prepare the quote",
+      confirm_booking: "Couldn't book the room",
+      send_confirmation_email: "Couldn't send the email",
+    };
+    return { tone: "error", title: failed[p.name] ?? "Step failed", detail: message };
+  }
+
+  switch (p.name) {
+    case "check_availability": {
+      const req = d.requested as { start: string; end: string; rooms: Array<{ roomName: string; available: boolean }> } | null;
+      const date = s(d.date) ? shortDate(String(d.date)) : undefined;
+      const rooms = req?.rooms.map((r) => `${r.roomName} ${r.available ? "free" : "booked"}`).join(", ");
+      return {
+        tone: "ok",
+        title: "Checked availability",
+        detail: join(date, req ? shortTime(req.start, req.end) : "whole day", rooms),
+      };
+    }
+    case "calculate_price":
+      return { tone: "ok", title: "Calculated the price", detail: join(`${d.duration_hours} hours`, s(d.total)) };
+    case "create_booking_draft":
+      return {
+        tone: "ok",
+        title: "Prepared a quote",
+        detail: join(s(d.roomName), s(d.date) ? shortDate(String(d.date)) : undefined, shortTime(d.start, d.end), s(d.total)),
+      };
+    case "confirm_booking":
+      return { tone: "ok", title: d.already_confirmed ? "Booking already confirmed" : "Booked the room", detail: join(s(d.roomName), s(d.refCode)) };
+    case "send_confirmation_email": {
+      const status = s(d.status);
+      const auto = p.automatic ? "sent by the booking system" : undefined;
+      if (status === "dry_run") return { tone: "ok", title: "Prepared the confirmation email", detail: join(`for ${s(d.to)}`, "not sent from this test server") };
+      if (status === "already_sent") return { tone: "ok", title: "Confirmation already sent", detail: s(d.to) };
+      if (status === "failed") return { tone: "error", title: "Couldn't send the email", detail: s(d.error) };
+      return { tone: "ok", title: "Emailed the confirmation", detail: join(s(d.to), auto) };
+    }
+  }
+  return { tone: "ok", title: p.name };
+}
+
+/** Suggested next replies for the current stage of the booking. */
+export function quickReplies(progress: BookingProgress, quoteActive: boolean): string[] {
+  if (progress.stage === "quote" && quoteActive) {
+    return ["Yes, confirm the booking", "Change the time", "Change my email"];
+  }
+  if (progress.stage === "booked") return ["Book another room", "What else is free that day?"];
+  if (progress.stage === "when" || progress.stage === "room") return ["What's free that day?", "How much would 4 hours cost?"];
+  return [];
+}

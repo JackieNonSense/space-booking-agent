@@ -1,40 +1,81 @@
 @import "tailwindcss";
 
-/* Palette follows the studio's assessment brief: warm paper ground, ink text,
-   a bronze accent. Light only, on purpose. */
+/* Design tokens: "ink & bronze".
+   Large surfaces are near-neutral, text and primary actions are ink, bronze is
+   reserved for the brand, the customer's own booking and the selected day.
+   Every text/background pair meets WCAG AA; run `node scripts/contrast-check.mjs`
+   after changing anything here. Light only, on purpose. */
 :root {
   color-scheme: light;
-  --paper: #f7f4ef;
+
+  /* Surfaces */
+  --canvas: #f7f6f3;
   --surface: #ffffff;
-  --ink: #2b2622;
-  --muted: #6b6257;
-  --faint: #a39a8f;
-  --line: #e8e1d6;
-  --accent: #8a6d4b;
-  --accent-strong: #6f5538;
-  --accent-soft: #f3ece2;
-  --ok: #3f7a52;
-  --ok-soft: #e7f1e9;
-  --busy: #d9cbb7;
-  --danger: #a6463b;
-  --danger-soft: #f8e9e6;
+  --inset: #fbfaf8;
+  --hover: #f1eee9;
+  --border: #e4e0d8;
+  --border-strong: #cbc4b8;
+  /* Edges that identify a control on their own (the message box): 3:1 minimum */
+  --border-control: #8f877b;
+
+  /* Text: fg-3 is the lightest any text may go */
+  --fg: #1a1714;
+  --fg-2: #4a433b;
+  --fg-3: #6e655a;
+
+  /* Primary actions */
+  --ink: #1a1714;
+  --ink-hover: #2e2924;
+  --on-ink: #ffffff;
+
+  /* Brand */
+  --brand: #7a5320;
+  --brand-strong: #5e3f15;
+  --brand-soft: #f5ede1;
+
+  /* Meaning */
+  --ok: #1f7a4d;
+  --ok-soft: #e7f3ec;
+  --ok-border: #b7dcc6;
+  --danger: #b42318;
+  --danger-soft: #fdedeb;
+  --danger-border: #f2b8b1;
+
+  /* Schedule */
+  --booked: #4a443d;
+  --on-booked: #ffffff;
+
+  --shadow-card: 0 1px 2px rgb(26 23 20 / 0.06), 0 4px 16px -8px rgb(26 23 20 / 0.12);
 }
 
 @theme inline {
-  --color-paper: var(--paper);
+  --color-canvas: var(--canvas);
   --color-surface: var(--surface);
+  --color-inset: var(--inset);
+  --color-hover: var(--hover);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-control: var(--border-control);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
   --color-ink: var(--ink);
-  --color-muted: var(--muted);
-  --color-faint: var(--faint);
-  --color-line: var(--line);
-  --color-accent: var(--accent);
-  --color-accent-strong: var(--accent-strong);
-  --color-accent-soft: var(--accent-soft);
+  --color-ink-hover: var(--ink-hover);
+  --color-on-ink: var(--on-ink);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
   --color-ok: var(--ok);
   --color-ok-soft: var(--ok-soft);
-  --color-busy: var(--busy);
+  --color-ok-border: var(--ok-border);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
+  --color-danger-border: var(--danger-border);
+  --color-booked: var(--booked);
+  --color-on-booked: var(--on-booked);
+
+  --shadow-card: var(--shadow-card);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-serif: var(--font-serif);
@@ -42,18 +83,32 @@
 
 html,
 body {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--canvas);
+  color: var(--fg);
 }
 
 body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Times and prices line up in columns. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* In the base layer so a component can still opt out with a utility class. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
 }
 
 /* Activity indicators. These loop only while the assistant is working, and
    stop for anyone who prefers reduced motion. */
 @keyframes blink {
-  0%, 80%, 100% { opacity: 0.25; }
+  0%, 80%, 100% { opacity: 0.3; }
   40% { opacity: 1; }
 }
 .typing-dot {
@@ -67,8 +122,8 @@ body {
   to { background-position: -100% 0; }
 }
 .shimmer-text {
-  color: var(--muted);
-  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--accent) 50%, var(--muted) 60%, var(--muted) 100%);
+  color: var(--fg-2);
+  background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 40%, var(--brand) 50%, var(--fg-2) 60%, var(--fg-2) 100%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -82,6 +137,11 @@ body {
 }
 .caret {
   animation: caret 1s step-end infinite;
+}
+
+/* Past time on today's schedule. */
+.hatch {
+  background-image: repeating-linear-gradient(135deg, transparent 0 4px, rgb(26 23 20 / 0.07) 4px 6px);
 }
 
 @media (prefers-reduced-motion: reduce) {

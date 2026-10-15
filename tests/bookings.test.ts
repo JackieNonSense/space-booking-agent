@@ -138,6 +138,8 @@ describe("checkAvailability", () => {
       "Room A, 4:00 pm – 8:00 pm",
       "Room A, 10:00 am – 2:00 pm",
     ]);
+    // Each option carries its price so the customer can compare.
+    expect(result.alternatives.every((a) => a.duration === "4 hours" && a.total === "$340.00")).toBe(true);
   });
 
   it("only offers future times today", async () => {
