@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { DateTime } from "luxon";
 import type { Db } from "../db";
-import { sendConfirmationEmail, unsentBookingIds } from "../email";
+import { sendBookingEmail, unsentEmails } from "../email";
 import type { Conversation } from "./conversations";
 import type { Emit } from "./events";
 import { timeNote } from "./prompt";
@@ -140,12 +140,12 @@ export async function runAgentTurn({ db, conversation, userText, now, emit, clie
 
   // Safety net: a confirmed booking always gets its email, even if the model
   // forgot to call the tool.
-  for (const bookingId of await unsentBookingIds(db, conversation.id)) {
+  for (const { bookingId, kind } of await unsentEmails(db, conversation.id)) {
     const started = Date.now();
-    const result = await sendConfirmationEmail(db, bookingId);
+    const result = await sendBookingEmail(db, bookingId, kind);
     emit({
       type: "tool_result",
-      id: `auto_${bookingId}`,
+      id: `auto_${kind}_${bookingId}`,
       name: "send_confirmation_email",
       ok: result.status !== "failed",
       data: { ...result },

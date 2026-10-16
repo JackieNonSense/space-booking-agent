@@ -1,61 +1,63 @@
 # Room Booking Assistant
 
-An AI agent that books **Room A** and **Room B** for Eastern Essence Studio through a chat. It checks availability, prices the booking by duration, collects the customer's details and emails a confirmation once the customer accepts the quote.
+An AI agent that books **Room A** and **Room B** for Eastern Essence Studio through a chat. It checks availability, prices the booking by duration, collects the customer's details and emails a confirmation once the customer accepts the quote. Customers can also pick a time visually, move or cancel a booking, and the studio has its own view of everything the assistant did.
 
-**Live demo: [space-booking-agent.vercel.app](https://space-booking-agent.vercel.app)** · Walkthrough video: _link coming_
+**Live demo: [space-booking-agent.vercel.app](https://space-booking-agent.vercel.app)** · **Studio view: [/studio](https://space-booking-agent.vercel.app/studio)** · Walkthrough video: _link coming_
 
 ![The assistant quoting Room B for 4 hours with the 15% discount, next to the live booking panel and room schedule](docs/screenshot.png)
 
 ## Try it
 
-Open the demo and type, or tap one of the suggestions:
+1. `Book Room B next Wednesday from 2pm to 6pm. I'm <your name>, <your email>` → a quote of **$340.00** (4 hours, 15% off). Reply `yes` and the booking is confirmed and emailed to you.
+2. Tap **Pick a time on the schedule**, or click free time in the room schedule → choose a room, start and length with the price shown on every option, then **Get a quote**.
+3. After booking, tap **Move this booking** (`Move this booking to 6pm to 10pm`) or **Cancel this booking**. Both show what will change and wait for your OK, and both send an email.
+4. `Is Room A free this Friday from 2pm to 6pm?` → Room A is taken, so the assistant offers other times and the other room, each with its price.
+5. Open **Studio** in the header to see bookings, conversion, room utilisation and every conversation step by step.
 
-1. `Book Room B this Friday from 2pm to 6pm. I'm Jane Citizen, jane@example.com` → you get a quote of **$340.00** (4 hours, 15% off). Reply `yes` and the booking is confirmed and emailed.
-2. `Is Room A free this Friday from 2pm to 6pm?` → Room A is already taken, so the agent offers other times and the other room.
-3. `Room A on Sunday 2:30pm to 6pm` → $350.00, and the agent points out that 4 hours would cost less ($340.00).
-
-Bookings are real and shared by everyone testing the demo. If an earlier test already took a slot, the agent says so and offers other times.
-
-Switch on **Agent trace** in the header to see every tool call the agent makes and its result.
+Bookings are real and shared by everyone testing the demo. If an earlier test already took a slot, the assistant says so and offers other times. Every step the agent takes appears in the chat as a plain-language line; click one to see its inputs and results, and again for the raw JSON.
 
 ## What the brief asked for
 
 | Requirement | How it's met |
 |---|---|
-| Check availability of Room A and Room B | `check_availability` tool against the live booking database; a week view shows both rooms |
-| Collect customer details | Name and email are captured into a quote; the "Your booking" panel shows what has been collected |
+| Check availability of Room A and Room B | `check_availability` against the live booking database; a schedule shows both rooms by day |
+| Collect customer details | Name and email are captured into the quote; the "Your booking" panel shows what has been collected |
 | Duration-based pricing (< 4 h at $100/h, ≥ 4 h with 15% off) | Calculated in code, never by the model; boundary cases are unit-tested |
 | Email confirmation after the price is accepted | Sent only after the customer confirms in a new message; includes name, room, date and time, duration and total, plus a calendar invite |
+
+Beyond the brief: a visual slot picker with live prices, moving and cancelling bookings (verified by reference and email), and a studio dashboard with masked customer details.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  U[Customer] -->|chat| API["/api/chat (agent loop)"]
+  U[Customer] -->|chat or slot picker| API["/api/chat (agent loop)"]
   API <-->|tool calls| M[Claude Sonnet 5.5]
-  API --> T1[check_availability]
-  API --> T2[calculate_price]
-  API --> T3[create_booking_draft]
-  API --> T4[confirm_booking]
-  API --> T5[send_confirmation_email]
-  T1 & T3 & T4 --> DB[("Postgres: bookings")]
-  T5 --> R[Resend: email + .ics]
+  API --> T1[check_availability / calculate_price]
+  API --> T2[create_booking_draft / confirm_booking]
+  API --> T3[find_booking / request_cancellation / confirm_cancellation]
+  API --> T4[send_confirmation_email]
+  T1 & T2 & T3 --> DB[("Postgres: bookings")]
+  T4 --> R[Resend: email + .ics]
+  DB --> S["/studio dashboard"]
 ```
 
 The model holds the conversation and extracts dates, times and details. Everything that has to be correct is code:
 
-- **Pricing is deterministic.** Durations come from clock times and prices are computed in integer cents (`lib/pricing.ts`). The model only repeats numbers a tool returned.
-- **The flow is enforced by the tools, not just the prompt.** `create_booking_draft` validates the request and returns a quote held for 15 minutes. `confirm_booking` refuses to run in the same turn the quote was made, so nothing is booked until the customer replies.
-- **No double bookings.** A Postgres exclusion constraint rejects overlapping bookings for the same room, even if two customers confirm at the same moment.
-- **Emails can't go wrong or go twice.** The email is built from the stored booking, not from model text, and is sent at most once per booking. If the model forgets to call the email tool, the server sends it anyway.
+- **Pricing is deterministic.** Durations come from clock times and prices are computed in integer cents (`lib/pricing.ts`). The model only repeats numbers a tool returned, and the slot picker uses the same function.
+- **Nothing happens without the customer's OK.** Quotes and cancellation requests are held server-side; `confirm_booking` and `confirm_cancellation` refuse to run in the same turn the quote or request was made.
+- **No double bookings.** A Postgres exclusion constraint rejects overlapping bookings for the same room. Moving a booking cancels the old one and inserts the new one in a single transaction, so a clash leaves the original untouched.
+- **A booking is only revealed with its reference and its email together**, and either one wrong gives the same answer.
+- **Emails can't go wrong or go twice.** Each email (confirmed, updated, cancelled) is built from the stored booking and sent at most once. If the model forgets to send one, the server sends it.
 - **Server-side history.** The conversation is stored on the server, so a client can't inject fake tool results.
 
-Assumptions: Sydney time; open 8am to 10pm daily; bookings in 30-minute steps, at least 1 hour, within one day; both rooms at $100/hour.
+Assumptions: Australian Eastern time (AEDT); open 8am to 10pm daily; bookings in 30-minute steps, at least 1 hour, within one day; both rooms at $100/hour.
 
 ## Testing
 
-- **80 unit tests** (`npm test`) cover pricing boundaries (3 h = $300, 4 h = $340, 4.5 h = $382.50, 5 h = $425), time parsing and validation, availability, the confirmation rule, concurrent bookings, idempotent emails and the agent loop against a scripted model.
-- **11 end-to-end conversation evals** (`npm run eval`) run against the real model and check the database afterwards: exact-4-hour discount, standard rate, the 3.5 h vs 4 h tip, room conflicts, price questions, "next Friday from 9 to 5", refusing to skip confirmation, saying yes twice, correcting an email, haggling, and a request in Chinese. Latest run: **11/11 passed** on Claude Sonnet 5.5, median reply 4.5 s, about $0.17 for the whole suite.
+- **98 unit tests** (`npm test`): pricing boundaries (3 h = $300, 4 h = $340, 4.5 h = $382.50, 5 h = $425), time parsing, availability, the confirmation rule, concurrent bookings, moving into an overlapping slot, a move that loses its slot leaving the original intact, cancellation, email idempotency per kind, upgrading an older database schema in place, masking, and the agent loop against a scripted model.
+- **14 end-to-end conversation evals** (`npm run eval`) run against the real model and check the database afterwards, including the 4-hour discount, room conflicts, refusing to skip confirmation, saying yes twice, correcting an email, haggling, moving a booking, cancelling only after confirmation, refusing a wrong email, and a request in Chinese. Latest run: **14/14 passed** on Claude Sonnet 5.5, median reply 5.6 s, about $0.35 for the suite.
+- `node scripts/contrast-check.mjs` verifies every colour pair in the design tokens meets WCAG AA.
 
 ## Run it locally
 
@@ -65,18 +67,19 @@ cp .env.example .env.local   # add ANTHROPIC_API_KEY
 npm run dev                  # http://localhost:3000
 ```
 
-Without `DATABASE_URL` the app uses an embedded Postgres (PGlite) in `.data/`. Without `RESEND_API_KEY`, emails are logged instead of sent and can be previewed from the chat.
+Without `DATABASE_URL` the app uses an embedded Postgres (PGlite) in `.data/`. Without `RESEND_API_KEY`, emails are logged instead of sent and can be previewed from the chat. `npm run email:test -- you@example.com` sends one real confirmation to check email settings.
 
-To deploy: import the repo into Vercel, add a Neon Postgres database from the Storage tab (it sets `DATABASE_URL`), add the other variables from `.env.example`, and deploy. Tables and demo bookings are created on first use. Functions run in Sydney (`vercel.json`).
+To deploy: import the repo into Vercel, add a Neon Postgres database from the Storage tab (it sets `DATABASE_URL`), add the other variables from `.env.example`, and deploy. Tables and demo bookings are created on first use and upgraded in place. Functions run in Sydney (`vercel.json`).
 
 ## Project layout
 
 ```
-app/components/      Chat UI, cards, booking panel, week timeline
-app/api/chat/        Streams the agent's replies and tool results
+app/components/      Chat UI, cards, slot picker, booking panel, schedule, studio dashboard
+app/api/             Chat stream, schedule and day availability, studio data, email preview
 lib/agent/           System prompt, tool definitions, agent loop
 lib/pricing.ts       Duration-based pricing
-lib/bookings.ts      Availability, quotes, confirmations
-lib/email.ts         Confirmation email and calendar invite
+lib/bookings.ts      Availability, quotes, bookings, moves and cancellations
+lib/email.ts         Booking emails and calendar invites
+lib/studio.ts        Dashboard figures, transcripts and masking
 tests/, evals/       Unit tests and conversation evals
 ```

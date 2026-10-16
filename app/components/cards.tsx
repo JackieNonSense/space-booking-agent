@@ -10,6 +10,7 @@ import {
   ExternalIcon,
   MailIcon,
   TagIcon,
+  XIcon,
 } from "./icons";
 import { EASE, fadeUp, popIn, pressable, stagger } from "./motion";
 import type { Alternative } from "./types";
@@ -31,7 +32,7 @@ const shortDate = (iso: string) =>
       })
     : "";
 
-/** Clock time of an ISO timestamp in Sydney, e.g. "3:12 pm". */
+/** Clock time of an ISO timestamp in studio time (AEDT), e.g. "3:12 pm". */
 const sydneyTime = (iso: string) =>
   iso
     ? new Date(iso).toLocaleTimeString("en-AU", { hour: "numeric", minute: "2-digit", timeZone: "Australia/Sydney" })
@@ -59,7 +60,7 @@ function Title({ icon, children, aside }: { icon: ReactNode; children: ReactNode
     <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
       <div className="flex items-center gap-2 text-[13px] font-semibold text-fg">
         <span className="text-fg-3">{icon}</span>
-        {children}
+        <span>{children}</span>
       </div>
       {aside}
     </div>
@@ -133,7 +134,35 @@ function Options({ alternatives, onPick, disabled }: { alternatives: Alternative
 
 // ---------------------------------------------------------------------------
 
-export function AvailabilityCard({ data, onPick, disabled }: { data: Data; onPick: (text: string) => void; disabled: boolean }) {
+/** Footer link that opens the slot picker for the same day. */
+function PickAnotherTime({ onClick, disabled }: { onClick?: () => void; disabled: boolean }) {
+  if (!onClick) return null;
+  return (
+    <div className="border-t border-line px-4 py-2.5">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-fg underline-offset-2 hover:underline disabled:opacity-40"
+      >
+        <CalendarIcon className="h-4 w-4 text-fg-3" />
+        Pick another time
+      </button>
+    </div>
+  );
+}
+
+export function AvailabilityCard({
+  data,
+  onPick,
+  onPickTime,
+  disabled,
+}: {
+  data: Data;
+  onPick: (text: string) => void;
+  onPickTime?: () => void;
+  disabled: boolean;
+}) {
   const requested = data.requested as
     | { when: string; rooms: Array<{ room: string; roomName: string; available: boolean }> }
     | null;
@@ -178,16 +207,28 @@ export function AvailabilityCard({ data, onPick, disabled }: { data: Data; onPic
         </motion.ul>
       </div>
       <Options alternatives={alternatives} onPick={onPick} disabled={disabled} />
+      <PickAnotherTime onClick={onPickTime} disabled={disabled} />
     </Card>
   );
 }
 
-export function UnavailableCard({ data, onPick, disabled }: { data: Data; onPick: (text: string) => void; disabled: boolean }) {
+export function UnavailableCard({
+  data,
+  onPick,
+  onPickTime,
+  disabled,
+}: {
+  data: Data;
+  onPick: (text: string) => void;
+  onPickTime?: () => void;
+  disabled: boolean;
+}) {
   return (
     <Card tone="danger">
       <Title icon={<AlertIcon className="h-4 w-4 text-danger" />}>Not available</Title>
       <p className="px-4 pb-3.5 pt-1.5 text-sm text-fg-2">{str(data.message)}</p>
       <Options alternatives={(data.alternatives ?? []) as Alternative[]} onPick={onPick} disabled={disabled} />
+      <PickAnotherTime onClick={onPickTime} disabled={disabled} />
     </Card>
   );
 }
@@ -220,6 +261,7 @@ export function QuoteCard({
   disabled: boolean;
 }) {
   const discounted = data.discountApplied === true;
+  const replaces = data.replaces as { refCode: string; roomName: string; when: string; total: string } | null;
   const badge =
     state === "booked" ? (
       <Badge tone="ok">
@@ -234,8 +276,16 @@ export function QuoteCard({
   return (
     <Card dimmed={state === "superseded"}>
       <Title icon={<TagIcon className="h-4 w-4" />} aside={badge}>
-        Quote
+        {replaces ? "New time" : "Quote"}
       </Title>
+      {replaces && (
+        <div className="mx-4 mt-2.5 rounded-lg border border-brand/30 bg-brand-soft px-3 py-2 text-[13px] text-brand-strong">
+          <div className="font-semibold">Moving booking {replaces.refCode}</div>
+          <div className="num">
+            From {replaces.roomName}, {replaces.when}
+          </div>
+        </div>
+      )}
 
       <motion.div className="px-4 pt-2" variants={stagger(0.05, 0.06)} initial="hidden" animate="show">
         <motion.div variants={fadeUp} className="text-lg font-semibold text-fg">
@@ -287,18 +337,33 @@ export function QuoteCard({
           </motion.span>
         </div>
         <p className="num mt-1.5 text-xs text-fg-3">{str(data.breakdown)}</p>
+        {replaces && (
+          <div className="num mt-2 flex justify-between border-t border-line pt-2 text-[13px]">
+            <span className="text-fg-2">Change from {replaces.total}</span>
+            <span className="font-semibold text-fg">{str(data.priceDifference)}</span>
+          </div>
+        )}
       </div>
 
       {state === "active" ? (
         <div className="px-4 pb-4 pt-3.5">
           <p className="text-[13px] text-fg-2">
-            Confirming books {str(data.roomName)} and emails the confirmation to{" "}
-            <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+            {replaces ? (
+              <>
+                Confirming moves {replaces.refCode} to this time. It will be cancelled, and the new reference is
+                emailed to <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+              </>
+            ) : (
+              <>
+                Confirming books {str(data.roomName)} and emails the confirmation to{" "}
+                <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+              </>
+            )}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <PrimaryButton onClick={onConfirm} disabled={disabled}>
               <CheckIcon className="h-4 w-4" strokeWidth={2.25} />
-              Confirm and book
+              {replaces ? "Confirm change" : "Confirm and book"}
             </PrimaryButton>
             <SecondaryButton onClick={onChange} disabled={disabled}>
               Change
@@ -362,12 +427,13 @@ function CopyRef({ value }: { value: string }) {
 }
 
 export function ConfirmedCard({ data }: { data: Data }) {
+  const replaced = data.replaced as { refCode: string; when: string } | null;
   return (
     <Card tone="ok">
       <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
         <div className="flex items-center gap-2.5">
           <DrawnCheck />
-          <span className="text-[15px] font-semibold text-fg">Booking confirmed</span>
+          <span className="text-[15px] font-semibold text-fg">{replaced ? "Booking moved" : "Booking confirmed"}</span>
         </div>
         <CopyRef value={str(data.refCode)} />
       </div>
@@ -389,6 +455,165 @@ export function ConfirmedCard({ data }: { data: Data }) {
           </motion.div>
         ))}
       </motion.dl>
+      {replaced && (
+        <p className="num border-t border-line px-4 py-2.5 text-[13px] text-fg-2">
+          Replaces <span className="font-mono font-semibold text-fg line-through">{replaced.refCode}</span> (
+          {replaced.when}), now cancelled.
+        </p>
+      )}
+      <div className="border-t border-line px-4 py-2.5">
+        <a
+          href={googleCalendarUrl(data)}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-fg underline-offset-2 hover:underline"
+        >
+          <CalendarIcon className="h-4 w-4 text-fg-3" />
+          Add to Google Calendar
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      </div>
+    </Card>
+  );
+}
+
+/** A prefilled Google Calendar event; times are studio-local with ctz. */
+function googleCalendarUrl(data: Data) {
+  const stamp = (hhmm: string) => `${str(data.date).replaceAll("-", "")}T${hhmm.replace(":", "")}00`;
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: `${str(data.roomName)} booking – Eastern Essence Studio`,
+    dates: `${stamp(str(data.start))}/${stamp(str(data.end))}`,
+    ctz: "Australia/Sydney",
+    details: `Booking ${str(data.refCode)} · ${str(data.duration)} · ${str(data.total)}`,
+    location: `Eastern Essence Studio – ${str(data.roomName)}`,
+  });
+  return `https://calendar.google.com/calendar/render?${params}`;
+}
+
+/** Four facts about a booking, used by the lookup and cancellation cards. */
+function BookingFacts({ data }: { data: Data }) {
+  return (
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 pb-4 pt-3 sm:grid-cols-4">
+      {[
+        ["Room", str(data.roomName)],
+        ["Date", shortDate(str(data.date))],
+        ["Time", str(data.when).split(", ").slice(-1)[0]],
+        ["Total", str(data.total)],
+      ].map(([k, v]) => (
+        <div key={k}>
+          <dt className="text-xs text-fg-3">{k}</dt>
+          <dd className="num text-sm font-medium text-fg">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function BookingFoundCard({ data }: { data: Data }) {
+  const cancelled = data.status === "cancelled";
+  return (
+    <Card>
+      <Title
+        icon={<CalendarIcon className="h-4 w-4" />}
+        aside={<Badge tone={cancelled ? "danger" : "ok"}>{cancelled ? "Cancelled" : "Confirmed"}</Badge>}
+      >
+        Booking <span className="font-mono">{str(data.refCode)}</span>
+      </Title>
+      <BookingFacts data={data} />
+    </Card>
+  );
+}
+
+export type CancellationState = "active" | "done" | "superseded";
+
+export function CancellationCard({
+  data,
+  state,
+  onConfirm,
+  onKeep,
+  disabled,
+}: {
+  data: Data;
+  state: CancellationState;
+  onConfirm: () => void;
+  onKeep: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <Card tone={state === "active" ? "danger" : "default"} dimmed={state === "superseded"}>
+      <Title
+        icon={<AlertIcon className="h-4 w-4 text-danger" />}
+        aside={state === "done" ? <Badge tone="danger">Cancelled</Badge> : null}
+      >
+        Cancel booking <span className="font-mono">{str(data.refCode)}</span>?
+      </Title>
+      <BookingFacts data={data} />
+      {state === "active" && (
+        <div className="border-t border-line px-4 pb-4 pt-3">
+          <p className="text-[13px] text-fg-2">
+            Cancelling releases this time. A cancellation notice goes to{" "}
+            <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <motion.button
+              type="button"
+              {...pressable}
+              onClick={onConfirm}
+              disabled={disabled}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-danger px-3.5 py-2 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Yes, cancel it
+            </motion.button>
+            <SecondaryButton onClick={onKeep} disabled={disabled}>
+              Keep it
+            </SecondaryButton>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+export function CancelledCard({ data }: { data: Data }) {
+  const email = data.email as { status: string; to: string } | undefined;
+  return (
+    <Card>
+      <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-6 w-6 place-items-center rounded-full bg-danger text-on-ink" aria-hidden>
+            <XIcon className="h-3.5 w-3.5" strokeWidth={2.5} />
+          </span>
+          <span className="text-[15px] font-semibold text-fg">Booking cancelled</span>
+        </div>
+        <span className="font-mono text-sm font-semibold text-fg-2 line-through">{str(data.refCode)}</span>
+      </div>
+      <BookingFacts data={data} />
+      {email && (
+        <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-2.5 text-[13px] text-fg-2">
+          <span className="flex items-center gap-2">
+            <MailIcon className="h-4 w-4 text-fg-3" />
+            {email.status === "sent"
+              ? `Cancellation notice emailed to ${email.to}`
+              : email.status === "dry_run"
+                ? "Cancellation notice ready (not sent from this test server)"
+                : email.status === "already_sent"
+                  ? `Notice already sent to ${email.to}`
+                  : "The cancellation notice couldn't be sent"}
+          </span>
+          {email.status !== "failed" && (
+            <a
+              href={`/api/bookings/${str(data.id)}/email`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex shrink-0 items-center gap-1 font-medium text-fg underline-offset-2 hover:underline"
+            >
+              Preview <ExternalIcon className="h-3.5 w-3.5" />
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

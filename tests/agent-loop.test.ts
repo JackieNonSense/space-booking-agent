@@ -78,7 +78,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   vi.stubEnv("RESEND_API_KEY", "");
-  await db.query(`TRUNCATE email_log, bookings, booking_drafts, conversations, request_log`);
+  await db.query(`TRUNCATE email_log, pending_cancellations, bookings, booking_drafts, conversations, request_log`);
   await seedDemoBookings(db, NOW);
 });
 

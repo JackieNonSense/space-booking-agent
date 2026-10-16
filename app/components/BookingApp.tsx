@@ -1,14 +1,26 @@
 "use client";
 
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/agent/events";
 import { BookingTicket, ProgressStrip } from "./BookingTicket";
-import { AvailabilityCard, ConfirmedCard, EmailCard, PriceCard, QuoteCard, UnavailableCard } from "./cards";
+import {
+  AvailabilityCard,
+  BookingFoundCard,
+  CancellationCard,
+  CancelledCard,
+  ConfirmedCard,
+  EmailCard,
+  PriceCard,
+  QuoteCard,
+  UnavailableCard,
+} from "./cards";
 import {
   bookedIds,
   bookingProgress,
   focusSlot,
+  cancellationStates,
   quickReplies,
   quoteStates,
   toolParts,
@@ -18,6 +30,7 @@ import { AlertIcon, ArrowUpIcon, AssistantMark, CalendarIcon, ChevronRightIcon, 
 import { EASE, fadeUp, pressable, stagger } from "./motion";
 import { RichText } from "./RichText";
 import { Schedule } from "./Schedule";
+import { SlotPicker, type PickerRequest } from "./SlotPicker";
 import { StepRow } from "./StepRow";
 import type { ChatMessage, Part, Schedule as ScheduleData } from "./types";
 
@@ -29,6 +42,9 @@ const SUGGESTIONS = [
 ];
 
 const uid = () => Math.random().toString(36).slice(2);
+
+/** Today's date at the studio, "YYYY-MM-DD". */
+const studioToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
 
 /** Lets screen readers switch voices for replies written in Chinese. */
 const langOf = (text: string) => (/[一-鿿]/.test(text) ? "zh" : undefined);
@@ -51,6 +67,7 @@ export function BookingApp() {
   const [tab, setTab] = useState<"chat" | "booking">("chat");
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
   const [week, setWeek] = useState(0);
+  const [picker, setPicker] = useState<PickerRequest | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +93,8 @@ export function BookingApp() {
   const highlightIds = useMemo(() => bookedIds(parts), [parts]);
   const quotes = useMemo(() => quoteStates(parts), [parts]);
   const quoteActive = [...quotes.values()].includes("active");
+  const cancellations = useMemo(() => cancellationStates(parts), [parts]);
+  const cancelActive = [...cancellations.values()].includes("active");
 
   // Jump the schedule to the week the conversation is about.
   useEffect(() => {
@@ -226,24 +245,56 @@ export function BookingApp() {
     let card: React.ReactNode = null;
     if (p.result) {
       const { ok, data } = p.result;
-      if (ok && p.name === "check_availability") card = <AvailabilityCard data={data} onPick={pick} disabled={busy || !isLive} />;
+      if (ok && p.name === "check_availability")
+        card = (
+          <AvailabilityCard
+            data={data}
+            onPick={pick}
+            onPickTime={() =>
+              setPicker({ date: String(data.date), room: (p.input as { room?: "A" | "B" | null } | null)?.room ?? undefined })
+            }
+            disabled={busy || !isLive}
+          />
+        );
       else if (ok && p.name === "calculate_price") card = <PriceCard data={data} />;
       else if (ok && p.name === "create_booking_draft")
         card = (
           <QuoteCard
             data={data}
             state={quotes.get(p.id) ?? "superseded"}
-            onConfirm={() => void send("Yes, please confirm the booking.")}
+            onConfirm={() => void send(data.replaces ? "Yes, please move my booking." : "Yes, please confirm the booking.")}
             onChange={startChange}
             disabled={busy}
           />
         );
       else if (ok && p.name === "confirm_booking") card = <ConfirmedCard data={data} />;
+      else if (ok && p.name === "find_booking") card = <BookingFoundCard data={data} />;
+      else if (ok && p.name === "request_cancellation")
+        card = (
+          <CancellationCard
+            data={data}
+            state={cancellations.get(p.id) ?? "superseded"}
+            onConfirm={() => void send("Yes, please cancel it.")}
+            onKeep={() => void send("No, keep my booking.")}
+            disabled={busy}
+          />
+        );
+      else if (ok && p.name === "confirm_cancellation") card = <CancelledCard data={data} />;
       else if (p.name === "send_confirmation_email") {
-        const bookingId = (p.input as { booking_id?: string } | null)?.booking_id ?? p.id.replace(/^auto_/, "");
+        const bookingId = (data.bookingId as string | undefined) ?? (p.input as { booking_id?: string } | null)?.booking_id;
         card = <EmailCard data={data} automatic={p.automatic} bookingId={bookingId} />;
       } else if (!ok && data.error_code === "ROOM_UNAVAILABLE")
-        card = <UnavailableCard data={data} onPick={pick} disabled={busy || !isLive} />;
+        card = (
+          <UnavailableCard
+            data={data}
+            onPick={pick}
+            onPickTime={() => {
+              const alt = (data.alternatives as Array<{ date: string }> | undefined)?.[0];
+              setPicker({ date: alt?.date ?? focus?.date ?? studioToday() });
+            }}
+            disabled={busy || !isLive}
+          />
+        );
     }
     return (
       <div key={p.id} className="space-y-2">
@@ -256,7 +307,7 @@ export function BookingApp() {
   const last = messages[messages.length - 1];
   const lastPart = last?.parts[last.parts.length - 1];
   const showTyping = busy && last?.role === "assistant" && (!lastPart || (lastPart.kind === "tool" && !!lastPart.result));
-  const replies = !busy && last?.role === "assistant" && !last.error ? quickReplies(progress, quoteActive) : [];
+  const replies = !busy && last?.role === "assistant" && !last.error ? quickReplies(progress, quoteActive, cancelActive) : [];
 
   return (
     <MotionConfig reducedMotion="user">
@@ -271,10 +322,15 @@ export function BookingApp() {
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-3">
-              <span className="hidden items-center gap-1.5 text-[13px] text-fg-2 sm:flex">
-                <span className="h-2 w-2 rounded-full bg-ok" aria-hidden />
-                Online
-              </span>
+              <nav className="flex rounded-lg border border-line-strong p-0.5 text-[13px] font-medium" aria-label="View">
+                <span className="flex items-center gap-1.5 rounded-md bg-ink px-2.5 py-1 text-on-ink sm:px-3" aria-current="page">
+                  <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden />
+                  Assistant
+                </span>
+                <Link href="/studio" className="rounded-md px-2.5 py-1 text-fg-2 transition-colors hover:text-fg sm:px-3">
+                  Studio
+                </Link>
+              </nav>
               <motion.button
                 type="button"
                 {...pressable}
@@ -349,8 +405,20 @@ export function BookingApp() {
                         ))}
                       </motion.ol>
 
+                      <motion.div variants={fadeUp} className="mt-6">
+                        <motion.button
+                          type="button"
+                          {...pressable}
+                          onClick={() => setPicker({ date: studioToday() })}
+                          className="inline-flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-on-ink shadow-card transition-colors hover:bg-ink-hover"
+                        >
+                          <CalendarIcon className="h-4 w-4" />
+                          Pick a time on the schedule
+                        </motion.button>
+                      </motion.div>
+
                       <motion.div variants={fadeUp} className="mt-8 text-[13px] font-medium text-fg-2">
-                        Try asking
+                        Or just ask
                       </motion.div>
                       <motion.div variants={stagger(0.05, 0.2)} className="mt-2 grid gap-2 sm:grid-cols-2">
                         {SUGGESTIONS.map(({ text, icon: Icon }) => (
@@ -440,7 +508,19 @@ export function BookingApp() {
                                 type="button"
                                 variants={fadeUp}
                                 {...pressable}
-                                onClick={() => (r.startsWith("Change") ? (setInput(`${r} to `), inputRef.current?.focus()) : void send(r))}
+                                onClick={() => {
+                                  // Replies that need details start a sentence for the customer to finish.
+                                  const prefill: Record<string, string> = {
+                                    "Change the time": "Change the time to ",
+                                    "Change my email": "Change my email to ",
+                                    "Choose a different time": "Make it ",
+                                    "Move this booking": "Move this booking to ",
+                                  };
+                                  if (prefill[r]) {
+                                    setInput(prefill[r]);
+                                    inputRef.current?.focus();
+                                  } else void send(r);
+                                }}
                                 className="rounded-full border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover"
                               >
                                 {r}
@@ -523,11 +603,28 @@ export function BookingApp() {
             aria-label="Booking and schedule"
           >
             <BookingTicket progress={progress} steps={parts} />
-            <Schedule schedule={schedule} week={week} onWeekChange={setWeek} focus={focus} highlightIds={highlightIds} />
+            <Schedule
+              schedule={schedule}
+              week={week}
+              onWeekChange={setWeek}
+              focus={focus}
+              highlightIds={highlightIds}
+              onPick={setPicker}
+            />
             <PricingPanel />
           </aside>
         </main>
       </div>
+      {picker && (
+        <SlotPicker
+          key={`${picker.date}-${picker.room}-${picker.start}`}
+          request={picker}
+          today={schedule?.today ?? studioToday()}
+          disabled={busy}
+          onClose={() => setPicker(null)}
+          onSubmit={(text) => void send(text)}
+        />
+      )}
     </MotionConfig>
   );
 }

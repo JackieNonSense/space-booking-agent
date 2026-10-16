@@ -8,6 +8,8 @@ import { SCHEMA_SQL } from "./schema";
  */
 export interface Db {
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<T[]>;
+  /** Runs the statements in one transaction and returns each statement's rows. */
+  transaction(steps: Array<{ text: string; params?: unknown[] }>): Promise<unknown[][]>;
 }
 
 export function splitStatements(sql: string): string[] {
@@ -22,6 +24,9 @@ export function neonDb(url: string): Db {
   return {
     async query<T>(text: string, params: unknown[] = []) {
       return (await sql.query(text, params)) as T[];
+    },
+    async transaction(steps) {
+      return (await sql.transaction(steps.map((s) => sql.query(s.text, s.params ?? [])))) as unknown[][];
     },
   };
 }
@@ -56,6 +61,13 @@ export async function pgliteDb(dataDir = "memory://"): Promise<Db> {
   return {
     async query<T>(text: string, params: unknown[] = []) {
       return (await pg.query<T>(text, params)).rows;
+    },
+    async transaction(steps) {
+      return pg.transaction(async (tx) => {
+        const out: unknown[][] = [];
+        for (const s of steps) out.push((await tx.query(s.text, s.params ?? [])).rows);
+        return out;
+      });
     },
   };
 }

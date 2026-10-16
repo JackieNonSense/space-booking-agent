@@ -16,7 +16,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.stubEnv("RESEND_API_KEY", "");
-  await db.query(`TRUNCATE email_log, bookings, booking_drafts`);
+  await db.query(`TRUNCATE email_log, pending_cancellations, bookings, booking_drafts`);
   const draft = await createDraft(
     db,
     {

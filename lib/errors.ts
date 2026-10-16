@@ -18,6 +18,9 @@ export type BookingErrorCode =
   | "DRAFT_EXPIRED"
   | "NEEDS_USER_CONFIRMATION"
   | "BOOKING_NOT_FOUND"
+  | "ALREADY_CANCELLED"
+  | "REQUEST_NOT_FOUND"
+  | "REQUEST_EXPIRED"
   | "EMAIL_FAILED";
 
 /**

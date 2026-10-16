@@ -56,13 +56,25 @@ export interface BookingView {
   total: string;
   totalCents: number;
   discountApplied: boolean;
+  status: "confirmed" | "cancelled";
 }
 
-export interface DraftView extends Omit<BookingView, "id" | "refCode"> {
+/** The booking a reschedule replaces, as shown next to the new quote. */
+export interface ReplacedSummary {
+  refCode: string;
+  roomName: string;
+  when: string;
+  total: string;
+}
+
+export interface DraftView extends Omit<BookingView, "id" | "refCode" | "status"> {
   draftId: string;
   breakdown: string;
   expiresAt: string;
   cheaperAlternative: string | null;
+  replaces: ReplacedSummary | null;
+  /** "+$40.00", "−$60.00" or "Same price", only for reschedules. */
+  priceDifference: string | null;
 }
 
 export interface Alternative {
@@ -91,12 +103,16 @@ interface BookingRow {
   total_cents: number;
   source: string;
   draft_id: string | null;
+  status: "confirmed" | "cancelled";
+  replaces: string | null;
 }
 
-interface DraftRow extends Omit<BookingRow, "ref_code" | "source" | "draft_id"> {
+interface DraftRow
+  extends Omit<BookingRow, "ref_code" | "source" | "draft_id" | "status" | "replaces"> {
   conversation_id: string;
   created_user_turn: number;
   expires_at: Date | string;
+  replaces_booking_id: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,20 +176,40 @@ function rowToView(row: BookingRow): BookingView {
     total: formatMoney(row.total_cents),
     totalCents: row.total_cents,
     discountApplied: row.discount_cents > 0,
+    status: row.status,
   };
+}
+
+const summarize = (b: BookingView): ReplacedSummary => ({
+  refCode: b.refCode,
+  roomName: b.roomName,
+  when: b.when,
+  total: b.total,
+});
+
+function priceDifference(newCents: number, oldCents: number): string {
+  const diff = newCents - oldCents;
+  if (diff === 0) return "Same price";
+  return `${diff > 0 ? "+" : "−"}${formatMoney(Math.abs(diff))}`;
 }
 
 // ---------------------------------------------------------------------------
 // Queries
 
 /** Busy intervals per room for one studio day. */
-export async function busyByRoom(db: Db, date: string): Promise<Record<RoomId, Interval[]>> {
+export async function busyByRoom(
+  db: Db,
+  date: string,
+  /** A booking to leave out, e.g. the one a reschedule replaces. */
+  excludeId: string | null = null,
+): Promise<Record<RoomId, Interval[]>> {
   const day = parseDate(date);
   const rows = await db.query<Pick<BookingRow, "room" | "starts_at" | "ends_at">>(
     `SELECT room, starts_at, ends_at FROM bookings
       WHERE status = 'confirmed' AND starts_at < $2 AND ends_at > $1
+        AND ($3::text IS NULL OR id <> $3)
       ORDER BY starts_at`,
-    [day.toISO(), day.plus({ days: 1 }).toISO()],
+    [day.toISO(), day.plus({ days: 1 }).toISO(), excludeId],
   );
   const result = Object.fromEntries(ROOM_IDS.map((r) => [r, [] as Interval[]])) as Record<
     RoomId,
@@ -320,6 +356,8 @@ export interface DraftInput extends SlotInput {
   room: RoomId;
   customer_name: string;
   customer_email: string;
+  /** Reference of an existing booking this quote would replace. */
+  reschedule_reference?: string | null;
 }
 
 export async function createDraft(
@@ -339,8 +377,13 @@ export async function createDraft(
     throw new BookingError("ROOM_UNAVAILABLE", `Only ${ROOM_IDS.map((r) => ROOMS[r].name).join(" and ")} can be booked.`);
   }
 
+  // A reschedule needs the original booking, found with the same email.
+  const original = input.reschedule_reference
+    ? assertManageable(await findBooking(db, input.reschedule_reference, email), ctx.now)
+    : null;
+
   const slot = resolveSlot(input, ctx.now);
-  await assertFree(db, input.room, slot, ctx.now);
+  await assertFree(db, input.room, slot, ctx.now, original?.id ?? null);
 
   const price = calculatePrice(slot.durationMinutes);
   const id = newId("dr");
@@ -348,8 +391,9 @@ export async function createDraft(
   await db.query(
     `INSERT INTO booking_drafts
        (id, conversation_id, room, starts_at, ends_at, customer_name, customer_email,
-        duration_minutes, subtotal_cents, discount_cents, total_cents, created_user_turn, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        duration_minutes, subtotal_cents, discount_cents, total_cents, created_user_turn, expires_at,
+        replaces_booking_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
     [
       id,
       ctx.conversationId,
@@ -364,6 +408,7 @@ export async function createDraft(
       price.totalCents,
       ctx.userTurn,
       expiresAt.toISO(),
+      original?.id ?? null,
     ],
   );
 
@@ -390,11 +435,13 @@ export async function createDraft(
     cheaperAlternative: cheaper
       ? `Booking ${formatHours(cheaper.durationHours)} instead would cost ${formatMoney(cheaper.totalCents)} (less than ${formatMoney(price.totalCents)}) thanks to the 15% discount for 4+ hours.`
       : null,
+    replaces: original ? summarize(original) : null,
+    priceDifference: original ? priceDifference(price.totalCents, original.totalCents) : null,
   };
 }
 
-async function assertFree(db: Db, room: RoomId, slot: Slot, now: DateTime) {
-  const busy = await busyByRoom(db, slot.date);
+async function assertFree(db: Db, room: RoomId, slot: Slot, now: DateTime, excludeId: string | null = null) {
+  const busy = await busyByRoom(db, slot.date, excludeId);
   if (busy[room].some((b) => overlaps(b, slot))) {
     throw unavailableError(busy, room, slot, now);
   }
@@ -411,6 +458,8 @@ function unavailableError(busy: Record<RoomId, Interval[]>, room: RoomId, slot: 
 export interface ConfirmResult {
   booking: BookingView;
   alreadyConfirmed: boolean;
+  /** The booking this one replaced, for reschedules. */
+  replaced: BookingView | null;
 }
 
 /**
@@ -432,7 +481,10 @@ export async function confirmDraft(
   }
 
   const existing = await bookingByDraft(db, draftId);
-  if (existing) return { booking: existing, alreadyConfirmed: true };
+  if (existing) {
+    const replaced = draft.replaces_booking_id ? await getBooking(db, draft.replaces_booking_id) : null;
+    return { booking: existing, alreadyConfirmed: true, replaced };
+  }
 
   if (ctx.userTurn <= draft.created_user_turn) {
     throw new BookingError(
@@ -447,21 +499,38 @@ export async function confirmDraft(
   if (start <= ctx.now) {
     throw new BookingError("IN_PAST", "That time has already passed.");
   }
+  const original = draft.replaces_booking_id ? await getBooking(db, draft.replaces_booking_id) : null;
+  if (original) assertManageable(original, ctx.now);
+
+  const insert = `INSERT INTO bookings
+       (id, ref_code, room, starts_at, ends_at, customer_name, customer_email, duration_minutes,
+        subtotal_cents, discount_cents, total_cents, draft_id, conversation_id, replaces)
+     SELECT $1, $2, room, starts_at, ends_at, customer_name, customer_email, duration_minutes,
+            subtotal_cents, discount_cents, total_cents, id, conversation_id, replaces_booking_id
+       FROM booking_drafts WHERE id = $3
+     RETURNING *`;
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const id = newId("bk");
     try {
-      const [row] = await db.query<BookingRow>(
-        `INSERT INTO bookings
-           (id, ref_code, room, starts_at, ends_at, customer_name, customer_email, duration_minutes,
-            subtotal_cents, discount_cents, total_cents, draft_id, conversation_id)
-         SELECT $1, $2, room, starts_at, ends_at, customer_name, customer_email, duration_minutes,
-                subtotal_cents, discount_cents, total_cents, id, conversation_id
-           FROM booking_drafts WHERE id = $3
-         RETURNING *`,
-        [id, newRefCode(), draftId],
-      );
-      return { booking: rowToView(row), alreadyConfirmed: false };
+      let row: BookingRow;
+      if (original) {
+        // Release the old slot and take the new one atomically: if the new slot
+        // is gone, the original booking stays exactly as it was.
+        const [, inserted] = await db.transaction([
+          {
+            text: `UPDATE bookings SET status = 'cancelled', cancelled_at = now(), replaced_by = $2
+                    WHERE id = $1 AND status = 'confirmed'`,
+            params: [original.id, id],
+          },
+          { text: insert, params: [id, newRefCode(), draftId] },
+        ]);
+        row = inserted[0] as BookingRow;
+      } else {
+        [row] = await db.query<BookingRow>(insert, [id, newRefCode(), draftId]);
+      }
+      const replaced = original ? await getBooking(db, original.id) : null;
+      return { booking: rowToView(row), alreadyConfirmed: false, replaced };
     } catch (err) {
       const code = pgErrorCode(err);
       if (code === PG_EXCLUSION_VIOLATION) {
@@ -479,7 +548,7 @@ export async function confirmDraft(
       if (code === PG_UNIQUE_VIOLATION) {
         // Either a concurrent confirm of the same draft won, or a ref-code clash.
         const raced = await bookingByDraft(db, draftId);
-        if (raced) return { booking: raced, alreadyConfirmed: true };
+        if (raced) return { booking: raced, alreadyConfirmed: true, replaced: null };
         continue;
       }
       throw err;
@@ -491,6 +560,110 @@ export async function confirmDraft(
 async function bookingByDraft(db: Db, draftId: string): Promise<BookingView | null> {
   const [row] = await db.query<BookingRow>(`SELECT * FROM bookings WHERE draft_id = $1`, [draftId]);
   return row ? rowToView(row) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Finding, changing and cancelling a customer's booking
+
+/**
+ * A booking is only revealed when the reference and the booking's email match
+ * together. Either one wrong gives the same answer, so references can't be
+ * probed one at a time.
+ */
+export async function findBooking(db: Db, reference: string, email: string): Promise<BookingView> {
+  const [row] = await db.query<BookingRow>(
+    `SELECT * FROM bookings
+      WHERE ref_code = $1 AND lower(customer_email) = $2 AND source <> 'seed'`,
+    [reference.trim().toUpperCase(), email.trim().toLowerCase()],
+  );
+  if (!row) {
+    throw new BookingError(
+      "BOOKING_NOT_FOUND",
+      "No booking matches that reference and email address together. Ask the customer to check both.",
+    );
+  }
+  return rowToView(row);
+}
+
+const atStart = (b: BookingView) => DateTime.fromISO(`${b.date}T${b.start}`, { zone: TIMEZONE });
+
+function assertManageable(booking: BookingView, now: DateTime): BookingView {
+  if (booking.status === "cancelled") {
+    throw new BookingError("ALREADY_CANCELLED", `Booking ${booking.refCode} has already been cancelled.`);
+  }
+  if (atStart(booking) <= now) {
+    throw new BookingError("IN_PAST", `Booking ${booking.refCode} has already started, so it can't be changed.`);
+  }
+  return booking;
+}
+
+export interface CancellationRequest {
+  cancellationId: string;
+  booking: BookingView;
+  expiresAt: string;
+}
+
+/** First half of a cancellation: nothing changes until the customer confirms. */
+export async function requestCancellation(
+  db: Db,
+  reference: string,
+  email: string,
+  ctx: { conversationId: string; userTurn: number; now: DateTime },
+): Promise<CancellationRequest> {
+  const booking = assertManageable(await findBooking(db, reference, email), ctx.now);
+  const id = newId("cx");
+  const expiresAt = ctx.now.plus({ minutes: DRAFT_TTL_MINUTES });
+  await db.query(
+    `INSERT INTO pending_cancellations (id, conversation_id, booking_id, created_user_turn, expires_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [id, ctx.conversationId, booking.id, ctx.userTurn, expiresAt.toISO()],
+  );
+  return { cancellationId: id, booking, expiresAt: expiresAt.toISO()! };
+}
+
+/** Cancels after the customer agreed in a later message. Idempotent. */
+export async function confirmCancellation(
+  db: Db,
+  cancellationId: string,
+  ctx: { conversationId: string; userTurn: number; now: DateTime },
+): Promise<{ booking: BookingView; alreadyCancelled: boolean }> {
+  const [request] = await db.query<{
+    booking_id: string;
+    created_user_turn: number;
+    expires_at: Date | string;
+    confirmed_at: Date | string | null;
+  }>(
+    `SELECT booking_id, created_user_turn, expires_at, confirmed_at
+       FROM pending_cancellations WHERE id = $1 AND conversation_id = $2`,
+    [cancellationId, ctx.conversationId],
+  );
+  if (!request) {
+    throw new BookingError("REQUEST_NOT_FOUND", "That cancellation request doesn't exist. Start a new one.");
+  }
+  if (request.confirmed_at) {
+    return { booking: (await getBooking(db, request.booking_id))!, alreadyCancelled: true };
+  }
+  if (ctx.userTurn <= request.created_user_turn) {
+    throw new BookingError(
+      "NEEDS_USER_CONFIRMATION",
+      "Tell the customer what will be cancelled and wait for them to confirm before cancelling.",
+    );
+  }
+  if (toStudioTime(request.expires_at) < ctx.now) {
+    throw new BookingError("REQUEST_EXPIRED", "The cancellation request expired. Start a new one.");
+  }
+  assertManageable((await getBooking(db, request.booking_id))!, ctx.now);
+
+  const [, updated] = await db.transaction([
+    { text: `UPDATE pending_cancellations SET confirmed_at = now() WHERE id = $1`, params: [cancellationId] },
+    {
+      text: `UPDATE bookings SET status = 'cancelled', cancelled_at = now()
+              WHERE id = $1 AND status = 'confirmed' RETURNING *`,
+      params: [request.booking_id],
+    },
+  ]);
+  const row = updated[0] as BookingRow | undefined;
+  return { booking: row ? rowToView(row) : (await getBooking(db, request.booking_id))!, alreadyCancelled: !row };
 }
 
 export async function getBooking(db: Db, bookingId: string): Promise<BookingView | null> {

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 import { EASE, pressable } from "./motion";
+import type { PickerRequest } from "./SlotPicker";
 import type { FocusSlot, Schedule as ScheduleData, ScheduleBlock } from "./types";
 
 const HOUR_PX = 24;
@@ -22,6 +23,10 @@ const compact = (minute: number) => {
   return `${h12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h >= 12 && h < 24 ? "pm" : "am"}`;
 };
 
+/** 840 → "14:00" */
+const clockOf = (minute: number) =>
+  `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+
 const range = (start: string, end: string) => `${compact(toMinute(start))}–${compact(toMinute(end))}`;
 
 const longDate = (iso: string) =>
@@ -38,12 +43,15 @@ export function Schedule({
   onWeekChange,
   focus,
   highlightIds,
+  onPick,
 }: {
   schedule: ScheduleData | null;
   week: number;
   onWeekChange: (week: number) => void;
   focus: FocusSlot | null;
   highlightIds: Set<string>;
+  /** Opens the slot picker; called from a click on free time or the day's "Pick a time" button. */
+  onPick?: (request: PickerRequest) => void;
 }) {
   // The day follows the conversation; a click picks another day until the
   // conversation moves on to a new slot.
@@ -68,7 +76,7 @@ export function Schedule({
           <h2 id="schedule-heading" className="font-serif text-xl font-semibold text-fg">
             Room schedule
           </h2>
-          <p className="mt-0.5 text-[13px] text-fg-3">Sydney time · open 8am–10pm</p>
+          <p className="mt-0.5 text-[13px] text-fg-3">AEDT · open 8am–10pm</p>
         </div>
         <div className="flex gap-1">
           {[
@@ -157,6 +165,7 @@ export function Schedule({
         blocksOn={blocksOn}
         focus={focus?.date === selected ? focus : null}
         highlightIds={highlightIds}
+        onPick={onPick}
       />
 
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 border-t border-line px-4 py-3 text-xs text-fg-2">
@@ -179,6 +188,7 @@ function DayView({
   blocksOn,
   focus,
   highlightIds,
+  onPick,
 }: {
   date: string;
   isToday: boolean;
@@ -188,17 +198,30 @@ function DayView({
   blocksOn: (date: string, room: "A" | "B") => ScheduleBlock[];
   focus: FocusSlot | null;
   highlightIds: Set<string>;
+  onPick?: (request: PickerRequest) => void;
 }) {
+  const [hover, setHover] = useState<{ room: "A" | "B"; minute: number } | null>(null);
   const height = ((close - open) / 60) * HOUR_PX;
   const y = (minute: number) => ((Math.min(Math.max(minute, open), close) - open) / 60) * HOUR_PX;
   // nowIso is ISO in studio time, so HH:MM sits at 11–16.
   const nowMinute = toMinute(nowIso.slice(11, 16));
   const hours: number[] = [];
   for (let m = open; m <= close; m += 60) hours.push(m);
+  const earliest = isToday ? Math.ceil((nowMinute + 1) / 30) * 30 : open;
+
+  /** Half-hour slot under the pointer, in minutes after midnight. */
+  const minuteAt = (e: React.MouseEvent<HTMLDivElement>) => {
+    const top = e.currentTarget.getBoundingClientRect().top;
+    return Math.floor((open + ((e.clientY - top) / HOUR_PX) * 60) / 30) * 30;
+  };
+  const canStart = (room: "A" | "B", m: number) =>
+    m >= Math.max(open, earliest) &&
+    m + 60 <= close &&
+    !blocksOn(date, room).some((b) => m < toMinute(b.end) && toMinute(b.start) < m + 60);
 
   return (
     <div className="px-4 pb-4 pt-3">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-center justify-between gap-3">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.h3
             key={date}
@@ -211,6 +234,16 @@ function DayView({
             {longDate(date)}
           </motion.h3>
         </AnimatePresence>
+        {onPick && (
+          <motion.button
+            type="button"
+            {...pressable}
+            onClick={() => onPick({ date })}
+            className="rounded-lg border border-line-strong px-2.5 py-1 text-[13px] font-medium text-fg transition-colors hover:bg-hover"
+          >
+            Pick a time
+          </motion.button>
+        )}
       </div>
 
       <div className="mt-2 grid grid-cols-[2.75rem_1fr_1fr] gap-x-1.5 text-[13px] font-medium text-fg-2">
@@ -254,7 +287,30 @@ function DayView({
                     toMinute(focus.start!) < toMinute(b.end),
                 );
               return (
-                <div key={room} className="relative rounded-md" role="group" aria-label={`Room ${room}`}>
+                <div
+                  key={room}
+                  className={`relative rounded-md ${onPick ? "cursor-pointer" : ""}`}
+                  role="group"
+                  aria-label={`Room ${room}`}
+                  onMouseMove={(e) => {
+                    const m = minuteAt(e);
+                    setHover(onPick && canStart(room, m) ? { room, minute: m } : null);
+                  }}
+                  onMouseLeave={() => setHover(null)}
+                  onClick={(e) => {
+                    const m = minuteAt(e);
+                    if (onPick && canStart(room, m)) onPick({ date, room, start: clockOf(m) });
+                  }}
+                >
+                  {hover?.room === room && (
+                    <div
+                      className="pointer-events-none absolute inset-x-0 z-10 flex items-center rounded-md border border-dashed border-fg-3 bg-hover/90 px-2 text-xs font-semibold text-fg"
+                      style={{ top: y(hover.minute), height: HOUR_PX }}
+                      aria-hidden
+                    >
+                      + {compact(hover.minute)}
+                    </div>
+                  )}
                   {isToday && nowMinute > open && (
                     <div className="hatch absolute inset-x-0 top-0 rounded-t-md" style={{ height: y(nowMinute) }} aria-hidden />
                   )}

@@ -1,9 +1,16 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { DateTime } from "luxon";
 import { z } from "zod";
-import { checkAvailability, confirmDraft, createDraft } from "../bookings";
+import {
+  checkAvailability,
+  confirmCancellation,
+  confirmDraft,
+  createDraft,
+  findBooking,
+  requestCancellation,
+} from "../bookings";
 import type { Db } from "../db";
-import { sendConfirmationEmail } from "../email";
+import { sendBookingEmail, sendConfirmationEmail } from "../email";
 import { BookingError } from "../errors";
 import { calculatePrice, cheaperLongerOption, formatMoney } from "../pricing";
 import { parseClock } from "../time";
@@ -15,8 +22,10 @@ const nullable = (schema: Record<string, unknown>, description: string) => ({
   description,
 });
 
-const DATE = { type: "string", description: "Date in YYYY-MM-DD (Sydney time)." };
+const DATE = { type: "string", description: "Date in YYYY-MM-DD (Australian Eastern time)." };
 const TIME = (what: string) => ({ type: "string", description: `${what} as 24-hour HH:MM.` });
+const REFERENCE = { type: "string", description: "Booking reference, e.g. EE-7K3Q9M." };
+const EMAIL = { type: "string", description: "The email address the booking was made with." };
 
 // Tool order and text are part of the cached, thinking-bound prompt prefix:
 // changing them mid-conversation invalidates earlier thinking blocks.
@@ -58,7 +67,7 @@ export const TOOLS: Tool[] = [
   {
     name: "create_booking_draft",
     description:
-      "Validate a booking and produce a price quote held for 15 minutes. Needs the room, date, start time, end time or duration, and the customer's full name and email. Returns a draft_id. This does NOT book the room: show the quote to the customer and wait for them to accept it.",
+      "Validate a booking and produce a price quote held for 15 minutes. Needs the room, date, start time, end time or duration, and the customer's full name and email. Returns a draft_id. This does NOT book the room: show the quote to the customer and wait for them to accept it. To move an existing booking, set reschedule_reference to its reference and use the email it was booked with; the quote then shows what it replaces and the price difference, and confirming it moves the booking.",
     strict: true,
     input_schema: {
       type: "object",
@@ -70,15 +79,28 @@ export const TOOLS: Tool[] = [
         duration_hours: nullable({ type: "number" }, "Length in hours, or null if end_time is given."),
         customer_name: { type: "string", description: "Customer's full name." },
         customer_email: { type: "string", description: "Customer's email address for the confirmation." },
+        reschedule_reference: nullable(
+          { type: "string" },
+          "Reference of the booking this replaces when the customer is moving an existing booking, or null for a new booking.",
+        ),
       },
-      required: ["room", "date", "start_time", "end_time", "duration_hours", "customer_name", "customer_email"],
+      required: [
+        "room",
+        "date",
+        "start_time",
+        "end_time",
+        "duration_hours",
+        "customer_name",
+        "customer_email",
+        "reschedule_reference",
+      ],
       additionalProperties: false,
     },
   },
   {
     name: "confirm_booking",
     description:
-      "Book the room for a draft the customer has explicitly accepted in their latest message. Never call it in the same turn the draft was created. Returns the booking_id and reference.",
+      "Book the room for a draft the customer has explicitly accepted in their latest message. Never call it in the same turn the draft was created. For a reschedule draft this moves the booking: the old one is cancelled and a new reference is issued. Returns the booking_id and reference.",
     strict: true,
     input_schema: {
       type: "object",
@@ -90,12 +112,48 @@ export const TOOLS: Tool[] = [
   {
     name: "send_confirmation_email",
     description:
-      "Email the booking confirmation (name, room, date and time, duration, total price, reference) to the customer. Call it right after confirm_booking succeeds. Safe to call twice: it never sends duplicates.",
+      "Email the booking confirmation (name, room, date and time, duration, total price, reference) to the customer, or the update notice for a moved booking. Call it right after confirm_booking succeeds. Safe to call twice: it never sends duplicates.",
     strict: true,
     input_schema: {
       type: "object",
       properties: { booking_id: { type: "string", description: "The booking_id from confirm_booking." } },
       required: ["booking_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "find_booking",
+    description:
+      "Look up an existing booking. Needs both the booking reference and the email address it was made with; if either is wrong nothing is returned. Use it when a customer asks about, wants to change, or wants to cancel a booking.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { reference: REFERENCE, email: EMAIL },
+      required: ["reference", "email"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "request_cancellation",
+    description:
+      "Start cancelling a booking (reference and email must match). Nothing is cancelled yet: tell the customer what will be cancelled and ask them to confirm. Returns a cancellation_id.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { reference: REFERENCE, email: EMAIL },
+      required: ["reference", "email"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "confirm_cancellation",
+    description:
+      "Cancel the booking for a cancellation the customer has explicitly confirmed in their latest message. Never call it in the same turn as request_cancellation. Emails the customer a cancellation notice.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { cancellation_id: { type: "string", description: "The cancellation_id from request_cancellation." } },
+      required: ["cancellation_id"],
       additionalProperties: false,
     },
   },
@@ -106,12 +164,16 @@ export type ToolName =
   | "calculate_price"
   | "create_booking_draft"
   | "confirm_booking"
-  | "send_confirmation_email";
+  | "send_confirmation_email"
+  | "find_booking"
+  | "request_cancellation"
+  | "confirm_cancellation";
 
 const room = z.enum(["A", "B"]);
 const str = z.string();
 const optStr = z.string().nullable().optional();
 const optNum = z.number().nullable().optional();
+const lookup = z.object({ reference: str, email: str });
 
 const inputs = {
   check_availability: z.object({
@@ -130,19 +192,22 @@ const inputs = {
     duration_hours: optNum,
     customer_name: str,
     customer_email: str,
+    reschedule_reference: optStr,
   }),
   confirm_booking: z.object({ draft_id: str }),
   send_confirmation_email: z.object({ booking_id: str }),
+  find_booking: lookup,
+  request_cancellation: lookup,
+  confirm_cancellation: z.object({ cancellation_id: str }),
 } satisfies Record<ToolName, z.ZodType>;
 
-// Tells the model how to describe each outcome in customer terms.
+// Tells the model how to describe each email outcome in customer terms.
 const EMAIL_NOTES: Record<string, string> = {
-  sent: "The confirmation email was sent.",
-  already_sent: "The confirmation email had already been sent. Don't send it again.",
+  sent: "The email was sent.",
+  already_sent: "This email had already been sent. Don't send it again.",
   dry_run:
-    "This test server has email sending switched off, so nothing was delivered. Tell the customer the booking is confirmed and that confirmation emails aren't sent from this test server, in plain words.",
-  failed:
-    "The email could not be sent. The booking is still confirmed: give the customer the booking reference.",
+    "This test server has email sending switched off, so nothing was delivered. Tell the customer the change is done and that emails aren't sent from this test server, in plain words.",
+  failed: "The email could not be sent. The booking change itself still went through: give the customer the reference.",
 };
 
 export interface ToolContext {
@@ -226,19 +291,23 @@ async function dispatch(
         draft_id: draft.draftId,
         ...draft,
         cheaper_alternative: draft.cheaperAlternative,
-        next_step:
-          "Show this quote and ask the customer to confirm. Do not call confirm_booking until they accept in a new message.",
+        next_step: draft.replaces
+          ? `Show this new time next to the booking it replaces (${draft.replaces.refCode}, ${draft.replaces.when}) and the price difference, and ask the customer to confirm the change. Do not call confirm_booking until they accept in a new message.`
+          : "Show this quote and ask the customer to confirm. Do not call confirm_booking until they accept in a new message.",
       };
     }
 
     case "confirm_booking": {
       const i = input as z.infer<typeof inputs.confirm_booking>;
-      const { booking, alreadyConfirmed } = await confirmDraft(ctx.db, i.draft_id, ctx);
+      const { booking, alreadyConfirmed, replaced } = await confirmDraft(ctx.db, i.draft_id, ctx);
       return {
         booking_id: booking.id,
         ...booking,
         already_confirmed: alreadyConfirmed,
-        next_step: "Call send_confirmation_email with this booking_id.",
+        replaced: replaced ? { refCode: replaced.refCode, when: replaced.when, roomName: replaced.roomName } : null,
+        next_step: replaced
+          ? `The booking moved: ${replaced.refCode} is cancelled and ${booking.refCode} is the new reference. Call send_confirmation_email with this booking_id.`
+          : "Call send_confirmation_email with this booking_id.",
       };
     }
 
@@ -246,6 +315,37 @@ async function dispatch(
       const i = input as z.infer<typeof inputs.send_confirmation_email>;
       const result = await sendConfirmationEmail(ctx.db, i.booking_id);
       return { ...result, note: EMAIL_NOTES[result.status] };
+    }
+
+    case "find_booking": {
+      const i = input as z.infer<typeof inputs.find_booking>;
+      const booking = await findBooking(ctx.db, i.reference, i.email);
+      return { booking_id: booking.id, ...booking };
+    }
+
+    case "request_cancellation": {
+      const i = input as z.infer<typeof inputs.request_cancellation>;
+      const { cancellationId, booking, expiresAt } = await requestCancellation(ctx.db, i.reference, i.email, ctx);
+      return {
+        cancellation_id: cancellationId,
+        cancellationId,
+        expiresAt,
+        ...booking,
+        next_step:
+          "Tell the customer which booking will be cancelled and ask them to confirm. Do not call confirm_cancellation until they confirm in a new message.",
+      };
+    }
+
+    case "confirm_cancellation": {
+      const i = input as z.infer<typeof inputs.confirm_cancellation>;
+      const { booking, alreadyCancelled } = await confirmCancellation(ctx.db, i.cancellation_id, ctx);
+      const email = await sendBookingEmail(ctx.db, booking.id, "cancelled");
+      return {
+        ...booking,
+        already_cancelled: alreadyCancelled,
+        email: { status: email.status, to: email.to, subject: email.subject },
+        note: EMAIL_NOTES[email.status],
+      };
     }
   }
 }

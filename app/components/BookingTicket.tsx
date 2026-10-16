@@ -19,6 +19,7 @@ const STATUS: Record<BookingProgress["stage"], string> = {
   room: "Room chosen",
   quote: "Waiting for your OK",
   booked: "Confirmed",
+  cancelled: "Cancelled",
 };
 
 /** A value that animates in when it first appears or changes. */
@@ -64,6 +65,7 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
   const done = stepsDone(progress);
   const current = done.findIndex((d) => !d);
   const booked = progress.stage === "booked";
+  const cancelled = progress.stage === "cancelled";
 
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card" aria-labelledby="ticket-heading">
@@ -79,7 +81,13 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
             exit={{ opacity: 0, scale: 0.9 }}
             transition={{ duration: 0.2 }}
             className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-              booked ? "bg-ok-soft text-ok" : progress.stage === "idle" ? "bg-hover text-fg-2" : "bg-brand-soft text-brand-strong"
+              booked
+                ? "bg-ok-soft text-ok"
+                : cancelled
+                  ? "bg-danger-soft text-danger"
+                  : progress.stage === "idle"
+                    ? "bg-hover text-fg-2"
+                    : "bg-brand-soft text-brand-strong"
             }`}
           >
             {STATUS[progress.stage]}
@@ -93,7 +101,7 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
           <li key={label}>
             <div className="h-1 overflow-hidden rounded-full bg-hover">
               <motion.div
-                className={`h-full rounded-full ${booked ? "bg-ok" : "bg-ink"}`}
+                className={`h-full rounded-full ${booked ? "bg-ok" : cancelled ? "bg-danger" : "bg-ink"}`}
                 initial={false}
                 animate={{ width: done[i] ? "100%" : "0%" }}
                 transition={{ duration: 0.45, ease: EASE }}
@@ -134,18 +142,20 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
             )}
           </AnimatePresence>
         </div>
-        <AnimatePresence>
-          {booked && (
+        <AnimatePresence mode="popLayout">
+          {(booked || cancelled) && (
             <motion.span
-              key="stamp"
+              key={cancelled ? "stamp-cancelled" : "stamp-booked"}
               aria-hidden
-              className="mb-1 rounded-md border-2 border-brand px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.18em] text-brand"
+              className={`mb-1 rounded-md border-2 px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.18em] ${
+                cancelled ? "border-danger text-danger" : "border-brand text-brand"
+              }`}
               initial={{ opacity: 0, scale: 1.5, rotate: -16 }}
               animate={{ opacity: 1, scale: 1, rotate: -8 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.35, delay: 0.25, ease: EASE }}
             >
-              Booked
+              {cancelled ? "Cancelled" : "Booked"}
             </motion.span>
           )}
         </AnimatePresence>
@@ -155,6 +165,42 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
       </div>
 
       <AnimatePresence>
+        {(progress.replacesRef || progress.cancelPending) && !cancelled && (
+          <motion.p
+            key="pending-change"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden border-t border-line bg-brand-soft px-4 py-2.5 text-[13px] text-brand-strong"
+          >
+            {progress.cancelPending
+              ? `Cancelling ${progress.refCode}: waiting for your confirmation`
+              : booked
+                ? `Moved from ${progress.replacesRef}, which is now cancelled`
+                : `Moving ${progress.replacesRef} to this new time`}
+          </motion.p>
+        )}
+        {cancelled && (
+          <motion.div
+            key="cancelled"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.35, ease: EASE }}
+            className="border-t border-danger-border bg-danger-soft px-4 py-3"
+          >
+            <div className="text-sm font-semibold text-danger">
+              Reference <span className="font-mono line-through">{progress.refCode}</span> cancelled
+            </div>
+            <div className="text-xs text-fg-2">
+              {progress.email?.status === "sent"
+                ? `Cancellation notice sent to ${progress.email.to}`
+                : progress.email?.status === "dry_run"
+                  ? "Notice ready (not sent from this test server)"
+                  : "This time has been released"}
+            </div>
+          </motion.div>
+        )}
         {booked && (
           <motion.div
             key="confirmed"
@@ -257,7 +303,7 @@ export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress;
         {done.map((d, i) => (
           <span
             key={i}
-            className={`h-1.5 w-5 rounded-full transition-colors ${d ? (progress.stage === "booked" ? "bg-ok" : "bg-ink") : "bg-hover"}`}
+            className={`h-1.5 w-5 rounded-full transition-colors ${d ? (progress.stage === "booked" ? "bg-ok" : progress.stage === "cancelled" ? "bg-danger" : "bg-ink") : "bg-hover"}`}
           />
         ))}
       </span>

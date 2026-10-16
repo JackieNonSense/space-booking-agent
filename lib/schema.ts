@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS booking_drafts (
 );
 
 CREATE TABLE IF NOT EXISTS email_log (
-  booking_id  text PRIMARY KEY REFERENCES bookings(id),
+  booking_id  text NOT NULL REFERENCES bookings(id),
+  kind        text NOT NULL DEFAULT 'confirmed',
   to_email    text NOT NULL,
   subject     text NOT NULL,
   status      text NOT NULL,
@@ -77,4 +78,26 @@ CREATE TABLE IF NOT EXISTS request_log (
 );
 CREATE INDEX IF NOT EXISTS request_log_ip_time ON request_log (ip, created_at);
 CREATE INDEX IF NOT EXISTS bookings_room_time ON bookings (room, starts_at);
+
+-- Changing and cancelling bookings. Additive, so databases created by an
+-- earlier version upgrade in place the next time the schema is applied.
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS replaces text;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS replaced_by text;
+ALTER TABLE booking_drafts ADD COLUMN IF NOT EXISTS replaces_booking_id text;
+
+CREATE TABLE IF NOT EXISTS pending_cancellations (
+  id                text PRIMARY KEY,
+  conversation_id   text NOT NULL,
+  booking_id        text NOT NULL REFERENCES bookings(id),
+  created_user_turn integer NOT NULL,
+  expires_at        timestamptz NOT NULL,
+  confirmed_at      timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+
+-- One email of each kind (confirmed, updated, cancelled) per booking.
+ALTER TABLE email_log ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'confirmed';
+ALTER TABLE email_log DROP CONSTRAINT IF EXISTS email_log_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS email_log_booking_kind ON email_log (booking_id, kind);
 `;

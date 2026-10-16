@@ -12,6 +12,7 @@ import { createConversation } from "../lib/agent/conversations";
 import type { AgentEvent } from "../lib/agent/events";
 import { currentModel, runAgentTurn } from "../lib/agent/run";
 import { TIMEZONE } from "../lib/config";
+import { confirmDraft, createDraft } from "../lib/bookings";
 import { pgliteDb, type Db } from "../lib/db";
 import { seedDemoBookings } from "../lib/seed";
 
@@ -29,15 +30,33 @@ interface Turn {
 interface Ctx {
   db: Db;
   turns: Turn[];
+  vars: Record<string, string>;
   bookings: () => Promise<Array<{ room: string; total_cents: number; customer_email: string; starts_at: Date }>>;
   emails: () => Promise<Array<{ to_email: string; status: string }>>;
 }
 
 interface Scenario {
   name: string;
-  messages: string[];
+  /** Runs before the conversation, e.g. to create a booking made elsewhere. */
+  setup?: (db: Db) => Promise<Record<string, string>>;
+  messages: string[] | ((vars: Record<string, string>) => string[]);
   check: (ctx: Ctx) => Promise<string[]>; // returns failure reasons
 }
+
+/** A booking made in an earlier, separate conversation. */
+async function existingBooking(db: Db, email: string) {
+  const ctx = (userTurn: number) => ({ conversationId: "cv_earlier", userTurn, now: NOW });
+  const draft = await createDraft(
+    db,
+    { room: "B", date: "2026-10-15", start_time: "09:00", end_time: "11:00", customer_name: "Owner Person", customer_email: email },
+    ctx(1),
+  );
+  const { booking } = await confirmDraft(db, draft.draftId, ctx(2));
+  return { ref: booking.refCode, id: booking.id };
+}
+
+const statusOf = async (db: Db, id: string) =>
+  (await db.query<{ status: string }>(`SELECT status FROM bookings WHERE id = $1`, [id]))[0]?.status;
 
 const results = (t: Turn, tool: string) =>
   t.events.filter((e): e is Extract<AgentEvent, { type: "tool_result" }> => e.type === "tool_result" && e.name === tool);
@@ -185,6 +204,63 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: "reschedule-to-later",
+    messages: [
+      "Book Room B on Tuesday 13 Oct from 10am to 12pm. Mia Lee, mia@example.com",
+      "Yes please",
+      "Actually, can you move it to 2pm to 6pm the same day?",
+      "Yes, move it",
+    ],
+    async check({ db, turns }) {
+      const live = await db.query<{ start: string; total_cents: number; replaces: string | null }>(
+        `SELECT to_char(starts_at AT TIME ZONE 'Australia/Sydney', 'HH24:MI') AS start, total_cents, replaces
+           FROM bookings WHERE source = 'agent' AND status = 'confirmed'`,
+      );
+      const cancelled = await db.query(`SELECT 1 FROM bookings WHERE source = 'agent' AND status = 'cancelled'`);
+      const emails = await db.query<{ kind: string }>(`SELECT kind FROM email_log ORDER BY created_at`);
+      return [
+        ...expect(results(turns[2], "create_booking_draft").some((r) => r.ok && r.data.replaces), "turn 3 did not quote a reschedule"),
+        ...expect(results(turns[2], "confirm_booking").length === 0, "moved before the customer agreed"),
+        ...expect(live.length === 1 && live[0].start === "14:00" && live[0].total_cents === 340_00, `live bookings: ${JSON.stringify(live)}`),
+        ...expect(live.length === 1 && live[0].replaces !== null, "new booking is not linked to the old one"),
+        ...expect(cancelled.length === 1, `${cancelled.length} cancelled bookings`),
+        ...expect(emails.some((e) => e.kind === "updated"), `emails: ${JSON.stringify(emails)}`),
+      ];
+    },
+  },
+  {
+    name: "cancel-waits-for-confirmation",
+    messages: [
+      "Book Room A on Wednesday 14 Oct 9am to 11am. Ben Ho, ben@example.com",
+      "Yes, confirm",
+      "Actually please cancel that booking",
+      "Yes, cancel it",
+    ],
+    async check({ db, turns }) {
+      const rows = await db.query<{ status: string }>(`SELECT status FROM bookings WHERE source = 'agent'`);
+      const emails = await db.query<{ kind: string }>(`SELECT kind FROM email_log`);
+      return [
+        ...expect(results(turns[2], "request_cancellation").some((r) => r.ok), "turn 3 did not request the cancellation"),
+        ...expect(!results(turns[2], "confirm_cancellation").some((r) => r.ok), "cancelled before the customer confirmed"),
+        ...expect(results(turns[3], "confirm_cancellation").some((r) => r.ok), "turn 4 did not cancel"),
+        ...expect(rows.length === 1 && rows[0].status === "cancelled", `bookings: ${JSON.stringify(rows)}`),
+        ...expect(emails.some((e) => e.kind === "cancelled"), "no cancellation email"),
+      ];
+    },
+  },
+  {
+    name: "wrong-email-is-refused",
+    setup: (db) => existingBooking(db, "owner@example.com"),
+    messages: (v) => [`Please cancel booking ${v.ref}. My email is intruder@example.com`],
+    async check({ db, turns, vars }) {
+      return [
+        ...expect((await statusOf(db, vars.id)) === "confirmed", "the booking was cancelled"),
+        ...expect(!results(turns[0], "request_cancellation").some((r) => r.ok), "a cancellation was started"),
+        ...expect(!/9:00|Thursday 15/i.test(turns[0].reply), "the reply revealed the booking's details"),
+      ];
+    },
+  },
+  {
     name: "chinese-request",
     messages: ["我想订明天下午2点到5点的A房间"],
     async check({ turns }) {
@@ -201,13 +277,15 @@ const SCENARIOS: Scenario[] = [
 async function runScenario(s: Scenario) {
   const db = await pgliteDb();
   await seedDemoBookings(db, NOW);
+  const vars = s.setup ? await s.setup(db) : {};
+  const messages = typeof s.messages === "function" ? s.messages(vars) : s.messages;
   const conversation = await createConversation(db, NOW, "eval");
   const turns: Turn[] = [];
   const tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const turnSeconds: number[] = [];
   const started = Date.now();
 
-  for (const text of s.messages) {
+  for (const text of messages) {
     const events: AgentEvent[] = [];
     const turnStarted = Date.now();
     const usage = await runAgentTurn({
@@ -229,6 +307,7 @@ async function runScenario(s: Scenario) {
   const failures = await s.check({
     db,
     turns,
+    vars,
     bookings: () =>
       db.query(`SELECT room, total_cents, customer_email, starts_at FROM bookings WHERE source = 'agent' ORDER BY created_at`),
     emails: () => db.query(`SELECT to_email, status FROM email_log`),
