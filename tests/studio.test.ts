@@ -5,7 +5,15 @@ import { confirmDraft, createDraft } from "@/lib/bookings";
 import { TIMEZONE } from "@/lib/config";
 import { pgliteDb, type Db } from "@/lib/db";
 import { seedDemoBookings } from "@/lib/seed";
-import { conversationTranscript, maskDeep, maskEmail, maskName, studioOverview } from "@/lib/studio";
+import {
+  conversationTranscript,
+  maskDeep,
+  maskEmail,
+  maskName,
+  maskRef,
+  maskText,
+  studioOverview,
+} from "@/lib/studio";
 
 const NOW = DateTime.fromISO("2026-10-10T09:15", { zone: TIMEZONE });
 
@@ -90,5 +98,50 @@ describe("studio data", () => {
     const tool = transcript!.items[1] as { ok: boolean; data: Record<string, unknown> };
     expect(tool.ok).toBe(true);
     expect(JSON.stringify(transcript)).not.toContain("jane@example.com");
+    // The name the customer typed in their first message.
+    expect(JSON.stringify(transcript)).not.toContain("Citizen");
+    expect((transcript!.items[0] as { text: string }).text).toContain("Jane C.");
+  });
+
+  it("never exposes booking ids or full references", async () => {
+    const id = await bookedConversation();
+    const [booking] = await db.query<{ id: string; ref_code: string }>(
+      `SELECT id, ref_code FROM bookings WHERE source = 'agent'`,
+    );
+    const overview = JSON.stringify(await studioOverview(db, NOW));
+    expect(overview).not.toContain(booking.id);
+    expect(overview).not.toContain(booking.ref_code);
+    expect(overview).toContain(`${booking.ref_code.slice(0, 5)}••••`);
+    expect(overview).not.toContain("Citizen");
+
+    // A transcript where the tools returned the id and the reference.
+    const conversation = await createConversation(db, NOW, null);
+    conversation.messages = [
+      { role: "user", content: "Yes, book it" },
+      { role: "assistant", content: [{ type: "tool_use", id: "t9", name: "confirm_booking", input: { draft_id: "dr_secret" } }] },
+      {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "t9",
+            content: JSON.stringify({ booking_id: booking.id, id: booking.id, refCode: booking.ref_code, customerName: "Jane Citizen" }),
+          },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: `Booked! Your reference is ${booking.ref_code}, Ms Citizen.` }] },
+    ];
+    conversation.userTurns = 1;
+    await saveConversation(db, conversation, 0);
+    const transcript = JSON.stringify(await conversationTranscript(db, conversation.id));
+    for (const secret of [booking.id, booking.ref_code, "dr_secret", "Citizen"]) expect(transcript).not.toContain(secret);
+    expect(transcript).toContain("Ms C.");
+    expect(id).toBeTruthy();
+  });
+
+  it("masks references, emails and known names in free text", () => {
+    expect(maskRef("Ref EE-7K3Q9M and EE-ABCDEF")).toBe("Ref EE-7K•••• and EE-AB••••");
+    expect(maskText("I'm Ana María Núñez (ana@example.com)", ["Ana María Núñez"])).toBe("I'm Ana N. (a***@example.com)");
+    expect(maskText("Thanks, Ms Núñez!", ["Ana María Núñez"])).toBe("Thanks, Ms N.!");
   });
 });

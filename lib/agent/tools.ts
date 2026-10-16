@@ -68,7 +68,7 @@ export const TOOLS: Tool[] = [
   {
     name: "create_booking_draft",
     description:
-      "Validate a booking and produce a price quote held for 15 minutes. Needs the room, date, start time, end time or duration, and the customer's full name and email. Returns a draft_id. This does NOT book the room: show the quote to the customer and wait for them to accept it. To move an existing booking, set reschedule_reference to its reference and use the email it was booked with; the quote then shows what it replaces and the price difference, and confirming it moves the booking.",
+      "Validate a booking and produce a price quote valid for 15 minutes. Needs the room, date, start time, end time or duration, and the customer's full name and email. Returns a draft_id. This does NOT book the room: show the quote to the customer and wait for them to accept it. To move an existing booking, set reschedule_reference to its reference and use the email it was booked with; the quote then shows what it replaces and the price difference, and confirming it moves the booking.",
     strict: true,
     input_schema: {
       type: "object",
@@ -208,6 +208,8 @@ const EMAIL_NOTES: Record<string, string> = {
   already_sent: "This email had already been sent. Don't send it again.",
   dry_run:
     "This test server has email sending switched off, so nothing was delivered. Tell the customer the change is done and that emails aren't sent from this test server, in plain words.",
+  demo_address:
+    "The address uses a reserved example domain (such as example.com) that can't receive email, so nothing was delivered. Tell the customer the change itself is done, that example addresses can't receive mail, and that they can open the email with the Preview button in the chat.",
   failed: "The email could not be sent. The booking change itself still went through: give the customer the reference.",
 };
 

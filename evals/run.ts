@@ -386,6 +386,21 @@ const SCENARIOS: Scenario[] = [
       return expect(/book|room|studio/i.test(turns[0].reply), "did not steer back to bookings");
     },
   },
+  {
+    name: "edge-price-question-then-yes-books-once",
+    messages: [
+      "Hi, I'm Tom Lee, tom@example.com. How much would Room A be on Tuesday 13 Oct from 8am to 12pm?",
+      "Yes please, book it",
+    ],
+    async check({ turns, bookings }) {
+      const b = await bookings();
+      return [
+        ...expect(results(turns[0], "create_booking_draft").some((r) => r.ok), "turn 1 quoted without a draft"),
+        ...expect(turns[0].reply.includes("340"), "turn 1 reply does not state $340"),
+        ...expect(b.length === 1 && b[0].total_cents === 340_00, `one "yes" should book it; bookings: ${JSON.stringify(b)}`),
+      ];
+    },
+  },
   // --- Edge cases: changing course -------------------------------------------
   {
     name: "edge-quote-expires-before-yes",

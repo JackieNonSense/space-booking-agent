@@ -10,7 +10,8 @@ import { atMinute, parseClock } from "./time";
 export type EmailKind = "confirmed" | "updated" | "cancelled";
 
 export interface EmailResult {
-  status: "sent" | "dry_run" | "already_sent" | "failed";
+  /** demo_address: a reserved test domain such as example.com, which can't receive mail. */
+  status: "sent" | "dry_run" | "demo_address" | "already_sent" | "failed";
   kind: EmailKind;
   to: string;
   subject: string;
@@ -24,6 +25,17 @@ export interface EmailResult {
 
 const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
+/**
+ * Domains reserved for examples and testing (RFC 2606, RFC 6761). Nothing can
+ * be delivered there, and Resend rejects them outright.
+ */
+export function isReservedAddress(email: string): boolean {
+  const domain = email.slice(email.lastIndexOf("@") + 1).toLowerCase();
+  return /(^|\.)(example\.(com|net|org)|example|test|invalid|localhost)$/.test(domain);
+}
+
+const FOOTER = `This is a demo built for the ${STUDIO_NAME} technical assessment.`;
 
 const HEADINGS: Record<EmailKind, string> = {
   confirmed: "Your booking is confirmed",
@@ -42,18 +54,21 @@ export function renderBookingEmail(b: BookingView, kind: EmailKind = "confirmed"
     cancelled: `Booking cancelled: ${b.roomName}, ${b.when} (${b.refCode})`,
   }[kind];
 
+  // AEDT or AEST, whichever applies on the booking's date.
+  const zone = atMinute(b.date, parseClock(b.start)).toFormat("ZZZZ", { locale: "en-AU" });
+  const when = `${b.when} (${zone})`;
   const rows: Array<[string, string]> =
     kind === "cancelled"
       ? [
           ["Customer name", b.customerName],
           ["Room", b.roomName],
-          ["Date & time", b.when],
+          ["Date & time", when],
           ["Booking reference", b.refCode],
         ]
       : [
           ["Customer name", b.customerName],
           ["Room", b.roomName],
-          ["Date & time", b.when],
+          ["Date & time", when],
           ["Duration", b.duration],
           ...(b.discountApplied
             ? ([
@@ -93,6 +108,8 @@ export function renderBookingEmail(b: BookingView, kind: EmailKind = "confirmed"
     manage,
     "",
     `— ${STUDIO_NAME} booking assistant`,
+    "",
+    FOOTER,
   ].join("\n");
 
   const tableRows = rows
@@ -123,7 +140,7 @@ export function renderBookingEmail(b: BookingView, kind: EmailKind = "confirmed"
     </td></tr>
   </table>
   <p style="max-width:520px;margin:16px auto 0;color:#6e655a;font-size:12px;text-align:center;">
-    Sent by the AI booking assistant prototype for ${escapeHtml(STUDIO_NAME)}.
+    ${escapeHtml(FOOTER)}
   </p>
 </body></html>`;
 
@@ -202,6 +219,12 @@ export async function sendBookingEmail(db: Db, bookingId: string, kind?: EmailKi
     await markEmail(db, booking.id, resolvedKind, "dry_run");
     return { ...base, status: "dry_run" };
   }
+  if (isReservedAddress(booking.customerEmail)) {
+    // Testers often use name@example.com. Nothing could arrive there, so skip
+    // the send instead of reporting a failure; the email can still be previewed.
+    await markEmail(db, booking.id, resolvedKind, "demo_address");
+    return { ...base, status: "demo_address" };
+  }
 
   if (!process.env.EMAIL_FROM) {
     // Resend's shared test sender only delivers to the account owner, so
@@ -247,14 +270,14 @@ async function markEmail(
   db: Db,
   bookingId: string,
   kind: EmailKind,
-  status: "sent" | "dry_run" | "failed",
+  status: "sent" | "dry_run" | "demo_address" | "failed",
   providerId: string | null = null,
   error: string | null = null,
 ) {
   await db.query(
     `UPDATE email_log
         SET status = $3, provider_id = $4, error = $5,
-            sent_at = CASE WHEN $3 IN ('sent', 'dry_run') THEN now() ELSE sent_at END
+            sent_at = CASE WHEN $3 IN ('sent', 'dry_run', 'demo_address') THEN now() ELSE sent_at END
       WHERE booking_id = $1 AND kind = $2`,
     [bookingId, kind, status, providerId, error],
   );

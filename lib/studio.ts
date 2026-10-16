@@ -22,15 +22,49 @@ export function maskName(name: string): string {
   return `${parts[0]} ${parts[parts.length - 1][0]}.`;
 }
 
-/** Masks emails inside any string, recursively through objects and arrays. */
-export function maskDeep<T>(value: T): T {
-  if (typeof value === "string") return maskEmail(value) as T;
-  if (Array.isArray(value)) return value.map(maskDeep) as T;
+const REF = /\bEE-([A-Z0-9]{2})[A-Z0-9]{4}\b/g;
+
+/**
+ * "EE-7K3Q9M" becomes "EE-7K••••": enough to tell bookings apart, not enough
+ * to look one up (the assistant also needs the full email for that).
+ */
+export const maskRef = (text: string) => text.replace(REF, "EE-$1••••");
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Masks emails, booking references and the given customer names inside free text. */
+export function maskText(text: string, names: string[] = []): string {
+  let out = maskRef(maskEmail(text));
+  for (const name of names) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const full = parts.map(escapeRegExp).join("\\s+");
+    out = out.replace(new RegExp(full, "giu"), maskName(name));
+    // The surname on its own too, e.g. "Ms Citizen".
+    const surname = parts[parts.length - 1];
+    if (surname.length >= 3) {
+      out = out.replace(new RegExp(`(?<!\\p{L})${escapeRegExp(surname)}(?!\\p{L})`, "giu"), `${surname[0]}.`);
+    }
+  }
+  return out;
+}
+
+/** Keys holding internal ids. A booking id opens its email preview, so none are shown. */
+const ID_KEY = /^id$|_id$|Id$/;
+
+/** Masks personal details recursively through objects and arrays. */
+export function maskDeep<T>(value: T, names: string[] = []): T {
+  if (typeof value === "string") return maskText(value, names) as T;
+  if (Array.isArray(value)) return value.map((v) => maskDeep(v, names)) as T;
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([k, v]) => [
         k,
-        /name$/i.test(k) && typeof v === "string" && !/room/i.test(k) ? maskName(v) : maskDeep(v),
+        typeof v === "string" && ID_KEY.test(k)
+          ? "•••"
+          : /name$/i.test(k) && typeof v === "string" && !/room/i.test(k)
+            ? maskName(v)
+            : maskDeep(v, names),
       ]),
     ) as T;
   }
@@ -107,11 +141,21 @@ export async function studioOverview(db: Db, now: DateTime) {
         ORDER BY created_at DESC`,
       [weekAgo.toISO()],
     ),
-    db.query<{ conversation_id: string }>(
-      `SELECT DISTINCT conversation_id FROM booking_drafts WHERE created_at > $1`,
+    db.query<{ conversation_id: string; customer_name: string }>(
+      `SELECT DISTINCT conversation_id, customer_name FROM booking_drafts WHERE created_at > $1`,
       [weekAgo.toISO()],
     ),
   ]);
+
+  // Names customers gave in each conversation, so they can be masked in its text.
+  const namesIn = new Map<string, string[]>();
+  for (const { conversation_id, customer_name } of [
+    ...drafts,
+    ...agentRows.map((r) => ({ conversation_id: r.conversation_id, customer_name: r.customer_name })),
+  ]) {
+    if (!conversation_id) continue;
+    namesIn.set(conversation_id, [...(namesIn.get(conversation_id) ?? []), customer_name]);
+  }
 
   // Utilisation: booked minutes per room per day against opening hours.
   const open = CLOSE_MINUTE - OPEN_MINUTE;
@@ -164,9 +208,9 @@ export async function studioOverview(db: Db, now: DateTime) {
       { label: "Booked", value: booked.size },
     ],
     heatmap,
+    // No booking ids: one is enough to open that booking's email preview.
     bookings: agentRows.slice(0, 30).map((r) => ({
-      id: r.id,
-      ref: r.ref_code,
+      ref: maskRef(r.ref_code),
       room: ROOMS[r.room].name,
       when: when(r).label,
       customer: maskName(r.customer_name),
@@ -181,7 +225,7 @@ export async function studioOverview(db: Db, now: DateTime) {
       startedAt: toStudioTime(c.created_at).toISO(),
       turns: c.user_turns,
       outcome: booked.has(c.id) ? "booked" : quoted.has(c.id) ? "quoted" : "browsing",
-      firstMessage: maskEmail(firstUserMessage(c.head)).slice(0, 120),
+      firstMessage: maskText(firstUserMessage(c.head), namesIn.get(c.id)).slice(0, 120),
     })),
   };
 }
@@ -240,5 +284,26 @@ export async function conversationTranscript(db: Db, id: string) {
       }
     }
   }
-  return { id, startedAt: toStudioTime(row.created_at).toISO(), items: maskDeep(items) };
+  // Names the customer gave, so they can be masked wherever they were typed.
+  const stored = await db.query<{ customer_name: string }>(
+    `SELECT customer_name FROM booking_drafts WHERE conversation_id = $1
+     UNION SELECT customer_name FROM bookings WHERE conversation_id = $1`,
+    [id],
+  );
+  const names = new Set(stored.map((r) => r.customer_name));
+  for (const item of items) {
+    if (item.kind !== "tool") continue;
+    for (const source of [item.input as Record<string, unknown> | null, item.data]) {
+      for (const key of ["customer_name", "customerName"]) {
+        if (typeof source?.[key] === "string") names.add(source[key] as string);
+      }
+    }
+  }
+  const known = [...names];
+  const masked: TranscriptItem[] = items.map((item) =>
+    item.kind === "tool"
+      ? { ...item, input: maskDeep(item.input, known), data: maskDeep(item.data, known) }
+      : { ...item, text: maskText(item.text, known) },
+  );
+  return { id, startedAt: toStudioTime(row.created_at).toISO(), items: masked };
 }

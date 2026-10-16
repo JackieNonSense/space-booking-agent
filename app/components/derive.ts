@@ -258,6 +258,7 @@ export function describeStep(p: ToolPart): StepSummary {
       const auto = p.automatic ? "sent by the booking system" : undefined;
       const what = d.kind === "updated" ? "update" : d.kind === "cancelled" ? "cancellation notice" : "confirmation";
       if (status === "dry_run") return { tone: "ok", title: `Prepared the ${what} email`, detail: join(`for ${s(d.to)}`, "not sent from this test server") };
+      if (status === "demo_address") return { tone: "ok", title: `Prepared the ${what} email`, detail: join(`for ${s(d.to)}`, "example address, not sent") };
       if (status === "already_sent") return { tone: "ok", title: `The ${what} was already sent`, detail: s(d.to) };
       if (status === "failed") return { tone: "error", title: "Couldn't send the email", detail: `${s(d.to)} · the change itself went through` };
       return { tone: "ok", title: `Emailed the ${what}`, detail: join(s(d.to), auto) };
@@ -271,7 +272,16 @@ export function describeStep(p: ToolPart): StepSummary {
       return {
         tone: "ok",
         title: d.already_cancelled ? "Booking already cancelled" : "Cancelled the booking",
-        detail: join(s(d.refCode), email?.status === "sent" ? `notice emailed to ${email.to}` : email?.status === "dry_run" ? "notice not sent from this test server" : undefined),
+        detail: join(
+          s(d.refCode),
+          email?.status === "sent"
+            ? `notice emailed to ${email.to}`
+            : email?.status === "dry_run"
+              ? "notice not sent from this test server"
+              : email?.status === "demo_address"
+                ? "notice not sent (example address)"
+                : undefined,
+        ),
       };
     }
   }

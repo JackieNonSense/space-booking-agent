@@ -262,6 +262,7 @@ export function QuoteCard({
 }) {
   const discounted = data.discountApplied === true;
   const replaces = data.replaces as { refCode: string; roomName: string; when: string; total: string } | null;
+  // "Quote valid until", not "held": the price is held, but someone else can still book the slot first.
   const badge =
     state === "booked" ? (
       <Badge tone="ok">
@@ -270,7 +271,7 @@ export function QuoteCard({
     ) : state === "superseded" ? (
       <Badge tone="neutral">Replaced by a newer quote</Badge>
     ) : (
-      <Badge tone="brand">Held until {sydneyTime(str(data.expiresAt))}</Badge>
+      <Badge tone="brand">Quote valid until {sydneyTime(str(data.expiresAt))}</Badge>
     );
 
   return (
@@ -597,11 +598,13 @@ export function CancelledCard({ data }: { data: Data }) {
               ? `Cancellation notice emailed to ${email.to}`
               : email.status === "dry_run"
                 ? "Cancellation notice ready (not sent from this test server)"
-                : email.status === "already_sent"
-                  ? `Notice already sent to ${email.to}`
-                  : "The cancellation notice couldn't be sent"}
+                : email.status === "demo_address"
+                  ? "Cancellation notice ready (example address, not sent)"
+                  : email.status === "already_sent"
+                    ? `Notice already sent to ${email.to}`
+                    : "The cancellation notice couldn't be sent"}
           </span>
-          {email.status !== "failed" && (
+          {Boolean(data.id) && (
             <a
               href={`/api/bookings/${str(data.id)}/email`}
               target="_blank"
@@ -622,22 +625,25 @@ export function EmailCard({ data, automatic, bookingId }: { data: Data; automati
   const status = str(data.status);
   const to = str(data.to);
   const failed = status === "failed";
+  const what = data.kind === "cancelled" ? "Cancellation notice" : data.kind === "updated" ? "Update" : "Confirmation";
   const title =
     status === "sent"
-      ? `Confirmation emailed to ${to}`
+      ? `${what} emailed to ${to}`
       : status === "already_sent"
-        ? `Confirmation already sent to ${to}`
-        : status === "dry_run"
-          ? `Confirmation email ready for ${to}`
+        ? `${what} already sent to ${to}`
+        : status === "dry_run" || status === "demo_address"
+          ? `${what} email ready for ${to}`
           : `Couldn't email ${to}`;
   const detail =
     status === "sent"
       ? "If it isn't in the inbox within a minute, check the spam folder."
       : status === "dry_run"
         ? "This test server doesn't send emails. You can preview it."
-        : failed
-          ? "The booking is still confirmed. Keep the booking reference."
-          : null;
+        : status === "demo_address"
+          ? "Example addresses can't receive mail, so it wasn't sent. You can preview it."
+          : failed
+            ? "The booking itself went through. Keep the booking reference; you can still preview the email."
+            : null;
 
   return (
     <Card tone={failed ? "danger" : "default"}>
@@ -657,11 +663,12 @@ export function EmailCard({ data, automatic, bookingId }: { data: Data; automati
           {(detail || automatic) && (
             <div className="mt-1 text-xs text-fg-3">
               {detail}
-              {automatic ? " Sent by the booking system." : ""}
+              {automatic ? " Handled automatically by the booking system." : ""}
             </div>
           )}
         </div>
-        {bookingId && !failed && (
+        {/* The preview is built from the stored booking, so it works whatever happened to the send. */}
+        {bookingId && (
           <motion.a
             {...pressable}
             href={`/api/bookings/${bookingId}/email`}

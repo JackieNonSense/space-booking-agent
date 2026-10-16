@@ -302,8 +302,12 @@ try {
     await page.locator("aside").getByRole("button", { name: "Pick a time", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    // Read once the picker is open: before that a slow week fetch can still change it.
-    const heading = (await page.locator('section[aria-labelledby="schedule-heading"] h3').first().innerText()).trim();
+    // The schedule's selected day, from the week strip: its heading animates, so
+    // for a moment the outgoing day's heading is still in the page.
+    const heading = await page
+      .getByRole("group", { name: "Choose a day" })
+      .locator('[aria-pressed="true"]')
+      .getAttribute("aria-label");
     const selected = dialog.getByRole("group", { name: "Day" }).locator('[aria-pressed="true"]');
     assert((await selected.count()) === 1, "no day chip is selected");
     assert(await selected.isVisible(), "the selected day chip is not visible");

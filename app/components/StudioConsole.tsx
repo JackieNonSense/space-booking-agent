@@ -27,7 +27,7 @@ interface Overview {
   funnel: Array<{ label: string; value: number }>;
   heatmap: Array<{ date: string; weekday: string; label: string; rooms: Record<"A" | "B", number> }>;
   bookings: Array<{
-    id: string;
+    /** Masked, e.g. "EE-7K••••". */
     ref: string;
     room: string;
     when: string;
@@ -36,6 +36,7 @@ interface Overview {
     total: string;
     status: "confirmed" | "moved" | "cancelled" | "replaced";
     conversationId: string | null;
+    createdAt: string;
   }>;
   conversations: Array<{
     id: string;
@@ -170,8 +171,8 @@ export function StudioConsole() {
           </div>
 
           <p className="mt-4 rounded-xl border border-line bg-inset px-4 py-2.5 text-[13px] text-fg-2">
-            <span className="font-semibold text-fg">Demo view.</span> Names and emails are masked because this page is
-            public. In production it would sit behind staff sign-in.
+            <span className="font-semibold text-fg">Demo view.</span> Names, emails and booking references are masked
+            because this page is public. In production it would sit behind staff sign-in.
           </p>
 
           {error && <p className="mt-6 text-sm text-danger">{error}</p>}
@@ -212,18 +213,18 @@ export function StudioConsole() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-line">
-                          {data.bookings.map((b) => {
+                          {data.bookings.map((b, i) => {
                             const [label, style] = STATUS_STYLE[b.status];
                             return (
                               <tr
-                                key={b.id}
+                                key={`${b.createdAt}-${i}`}
                                 onClick={() => b.conversationId && setOpenId(b.conversationId)}
                                 className={b.conversationId ? "cursor-pointer transition-colors hover:bg-inset" : ""}
                               >
                                 <td className={`whitespace-nowrap px-4 py-2.5 font-mono font-semibold ${b.status === "replaced" || b.status === "cancelled" ? "text-fg-3 line-through" : "text-fg"}`}>
                                   {b.ref}
                                 </td>
-                                <td className="num px-4 py-2.5 text-fg">{b.when}</td>
+                                <td className="num whitespace-nowrap px-4 py-2.5 text-fg">{b.when}</td>
                                 <td className="whitespace-nowrap px-4 py-2.5 text-fg">{b.room}</td>
                                 <td className="px-4 py-2.5">
                                   <div className="text-fg">{b.customer}</div>

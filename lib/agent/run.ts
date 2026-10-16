@@ -11,7 +11,8 @@ type MessageParam = Anthropic.Beta.BetaMessageParam;
 type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 // Read lazily so scripts that load .env files after importing still apply them.
-export const currentModel = () => process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
+// Sonnet 5.5 is the model the conversation evals run against.
+export const currentModel = () => process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
 const currentEffort = () => (process.env.ANTHROPIC_EFFORT || "medium") as Effort;
 const MAX_STEPS = 8;
 

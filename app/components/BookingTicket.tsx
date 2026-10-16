@@ -197,7 +197,9 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
                 ? `Cancellation notice sent to ${progress.email.to}`
                 : progress.email?.status === "dry_run"
                   ? "Notice ready (not sent from this test server)"
-                  : "This time has been released"}
+                  : progress.email?.status === "demo_address"
+                    ? "Notice ready (example address, not sent)"
+                    : "This time has been released"}
             </div>
           </motion.div>
         )}
@@ -221,11 +223,13 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
                       ? "The confirmation email couldn't be sent"
                       : progress.email.status === "dry_run"
                         ? "Email ready (not sent from this test server)"
-                        : `Confirmation sent to ${progress.email.to}`
+                        : progress.email.status === "demo_address"
+                          ? "Email ready (example address, not sent)"
+                          : `Confirmation sent to ${progress.email.to}`
                     : "Sending the confirmation email…"}
                 </div>
               </div>
-              {progress.bookingId && progress.email && progress.email.status !== "failed" && (
+              {progress.bookingId && progress.email && (
                 <motion.a
                   {...pressable}
                   href={`/api/bookings/${progress.bookingId}/email`}

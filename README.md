@@ -2,7 +2,7 @@
 
 An AI agent that books **Room A** and **Room B** for Eastern Essence Studio through a chat. It checks availability, prices the booking by duration, collects the customer's details and emails a confirmation once the customer accepts the quote. Customers can also pick a time visually, move or cancel a booking, and the studio has its own view of everything the assistant did.
 
-**Live demo: [space-booking-agent.vercel.app](https://space-booking-agent.vercel.app)** · **Studio view: [/studio](https://space-booking-agent.vercel.app/studio)** · Walkthrough video: _link coming_
+**Live demo: [space-booking-agent.vercel.app](https://space-booking-agent.vercel.app)** · **Studio view: [/studio](https://space-booking-agent.vercel.app/studio)**
 
 ![The assistant quoting Room B for 4 hours with the 15% discount, next to the live booking panel and room schedule](docs/screenshot.png)
 
@@ -14,7 +14,7 @@ An AI agent that books **Room A** and **Room B** for Eastern Essence Studio thro
 4. `Is Room A free this Friday from 2pm to 6pm?` → Room A is taken, so the assistant offers other times and the other room, each with its price.
 5. Open **Studio** in the header to see bookings, conversion, room utilisation and every conversation step by step.
 
-Bookings are real and shared by everyone testing the demo. If an earlier test already took a slot, the assistant says so and offers other times. Every step the agent takes appears in the chat as a plain-language line; click one to see its inputs and results, and again for the raw JSON.
+Use a real email address to receive the confirmation. Reserved test domains such as example.com can't receive mail, so nothing is sent to them, but the email can still be previewed from the chat. Bookings are real and shared by everyone testing the demo. If an earlier test already took a slot, the assistant says so and offers other times. Every step the agent takes appears in the chat as a plain-language line; click one to see its inputs and results, and again for the raw JSON.
 
 ## What the brief asked for
 
@@ -47,7 +47,7 @@ The model holds the conversation and extracts dates, times and details. Everythi
 - **Pricing is deterministic.** Durations come from clock times and prices are computed in integer cents (`lib/pricing.ts`). The model only repeats numbers a tool returned, and the slot picker uses the same function.
 - **Nothing happens without the customer's OK.** Quotes and cancellation requests are held server-side; `confirm_booking` and `confirm_cancellation` refuse to run in the same turn the quote or request was made.
 - **No double bookings.** A Postgres exclusion constraint rejects overlapping bookings for the same room. Moving a booking cancels the old one and inserts the new one in a single transaction, so a clash leaves the original untouched.
-- **A booking is only revealed with its reference and its email together**, and either one wrong gives the same answer.
+- **A booking is only revealed with its reference and its email together**, and either one wrong gives the same answer. The public studio view masks names, emails and references and never shows booking ids.
 - **Emails can't go wrong or go twice.** Each email (confirmed, updated, cancelled) is built from the stored booking and sent at most once. If the model forgets to send one, the server sends it.
 - **Server-side history.** The conversation is stored on the server, so a client can't inject fake tool results.
 - **A dropped connection doesn't lose a booking.** If the customer closes the tab mid-reply, the turn still finishes on the server: the booking is saved and the email goes out.
@@ -56,8 +56,8 @@ Assumptions: Australian Eastern time (AEDT); open 8am to 10pm daily; bookings in
 
 ## Testing
 
-- **144 unit tests** (`npm test`): pricing boundaries (3 h = $300, 4 h = $340, 4.5 h = $382.50, 5 h = $425, a full 14-hour day = $1,190), time parsing, opening hours and the 180-day window, daylight-saving changeover days, availability, the confirmation rule, concurrent bookings, moving into an overlapping slot, a move that loses its slot leaving the original intact, cancellation, email idempotency per kind, the email tool refusing bookings from other conversations, upgrading an older database schema in place, masking, rate limits, and the agent loop against a scripted model, including a tool crashing mid-turn.
-- **33 end-to-end conversation evals** (`npm run eval`) run against the real model and check the database afterwards: the 4-hour discount, an 8-hour day, room conflicts, refusing to skip confirmation, saying yes twice, correcting an email, haggling and a "system override" price injection, moving a booking (including one from an earlier chat), cancelling only after confirmation, refusing a wrong email, a quote that expires before the yes, both rooms at once, past, too-early, too-late, too-short, off-grid and too-far-ahead times, an invalid email, phrasings like "half past two until six", and a request in Chinese. Latest run: **33/33 passed** on Claude Sonnet 5.5, median reply 6.0 s, about $0.75 for the suite.
+- **157 unit tests** (`npm test`): pricing boundaries (3 h = $300, 4 h = $340, 4.5 h = $382.50, 5 h = $425, a full 14-hour day = $1,190), time parsing, opening hours and the 180-day window, daylight-saving changeover days, availability, the confirmation rule, concurrent bookings, moving into an overlapping slot, a move that loses its slot leaving the original intact, cancellation, email idempotency per kind, the email tool refusing bookings from other conversations, reserved test addresses (example.com) being previewed instead of sent, the studio never exposing booking ids, references or customer names, upgrading an older database schema in place, masking, rate limits, and the agent loop against a scripted model, including a tool crashing mid-turn.
+- **34 end-to-end conversation evals** (`npm run eval`) run against the real model and check the database afterwards: the 4-hour discount, an 8-hour day, room conflicts, refusing to skip confirmation, saying yes twice, correcting an email, haggling and a "system override" price injection, moving a booking (including one from an earlier chat), cancelling only after confirmation, refusing a wrong email, a quote that expires before the yes, asking the price and then saying yes (one yes books it), both rooms at once, past, too-early, too-late, too-short, off-grid and too-far-ahead times, an invalid email, phrasings like "half past two until six", and a request in Chinese. Latest run: **34/34 passed** on Claude Sonnet 5.5, median reply 5.9 s, about $0.78 for the suite.
 - **20 browser checks** (`node scripts/ui-edge.mjs <url>`, headless Chrome): blank and over-long messages, double sends, server errors with retry, rate limits, a reply cut off mid-stream, slot picker rules and keyboard use, reduced motion, layouts at phone width, and a real booking with a very long name and email.
 - `node scripts/contrast-check.mjs` verifies every colour pair in the design tokens meets WCAG AA.
 

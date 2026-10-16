@@ -1,8 +1,9 @@
 import type { Db } from "./db";
 
-const PER_IP_PER_HOUR = Number(process.env.RATE_LIMIT_PER_HOUR || 60);
-// Roughly 3 model calls per message, so this caps a bad day at a few dollars.
-const TOTAL_PER_DAY = Number(process.env.RATE_LIMIT_PER_DAY || 300);
+const PER_IP_PER_HOUR = Number(process.env.RATE_LIMIT_PER_HOUR || 120);
+// High enough that a burst of other visitors can't lock reviewers out; the
+// Anthropic console's monthly spend limit is the real cost cap.
+const TOTAL_PER_DAY = Number(process.env.RATE_LIMIT_PER_DAY || 1000);
 
 export type RateLimitResult = { ok: true } | { ok: false; message: string };
 
