@@ -2,7 +2,9 @@
 
 An AI agent that books **Room A** and **Room B** for Eastern Essence Studio through a chat. It checks availability, prices the booking by duration, collects the customer's details and emails a confirmation once the customer accepts the quote.
 
-**Live demo:** _link added on deployment_ · **Walkthrough video (3 min):** _link added on deployment_
+**Live demo: [space-booking-agent.vercel.app](https://space-booking-agent.vercel.app)** · Walkthrough video: _link coming_
+
+![The assistant quoting Room B for 4 hours with the 15% discount, next to the live booking panel and room schedule](docs/screenshot.png)
 
 ## Try it
 
