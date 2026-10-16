@@ -1,7 +1,8 @@
 "use client";
 
 import { motion } from "motion/react";
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { isValidEmail, isValidName, normaliseEmail, normaliseName, suggestEmail } from "@/lib/contact";
 import {
   AlertIcon,
   CalendarIcon,
@@ -10,6 +11,7 @@ import {
   ExternalIcon,
   MailIcon,
   TagIcon,
+  UserIcon,
   XIcon,
 } from "./icons";
 import { EASE, fadeUp, popIn, pressable, stagger } from "./motion";
@@ -245,6 +247,129 @@ export function PriceCard({ data }: { data: Data }) {
   );
 }
 
+const inputClass = (invalid: boolean) =>
+  `mt-1 w-full rounded-lg border bg-surface px-3 py-2 text-base text-fg outline-none transition-shadow placeholder:text-fg-3 focus:shadow-[0_0_0_3px_rgb(26_23_20/0.08)] sm:text-[15px] ${
+    invalid ? "border-danger focus:border-danger" : "border-control focus:border-ink"
+  }`;
+
+/**
+ * Name and email in two fields instead of one free-text reply. Submitting
+ * sends an ordinary chat message, so the assistant still takes the details
+ * from the conversation; typing them works just as well.
+ */
+export function DetailsCard({
+  initial,
+  retry,
+  onSubmit,
+  disabled,
+}: {
+  initial: { name: string; email: string };
+  /** The assistant rejected these; show what's wrong straight away. */
+  retry: boolean;
+  onSubmit: (name: string, email: string) => void;
+  disabled: boolean;
+}) {
+  const id = useId();
+  const [name, setName] = useState(initial.name);
+  const [email, setEmail] = useState(initial.email);
+  const [checked, setChecked] = useState(retry);
+  const nameOk = isValidName(name);
+  const emailOk = isValidEmail(email);
+  const suggestion = emailOk ? suggestEmail(email) : null;
+
+  const submit = () => {
+    setChecked(true);
+    if (nameOk && emailOk && !disabled) onSubmit(normaliseName(name), normaliseEmail(email));
+  };
+
+  return (
+    <Card>
+      <Title icon={<UserIcon className="h-4 w-4" />}>Your details</Title>
+      <form
+        noValidate
+        className="px-4 pb-4 pt-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <p className="text-[13px] text-fg-2">
+          {retry
+            ? "Please check these and send them again."
+            : "To prepare your quote I need your full name and the email the confirmation should go to."}
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor={`${id}-name`} className="text-[13px] font-medium text-fg">
+              Full name
+            </label>
+            <input
+              id={`${id}-name`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoComplete="name"
+              maxLength={100}
+              aria-invalid={checked && !nameOk}
+              aria-describedby={checked && !nameOk ? `${id}-name-error` : undefined}
+              className={inputClass(checked && !nameOk)}
+            />
+            {checked && !nameOk && (
+              <p id={`${id}-name-error`} className="mt-1 text-xs text-danger">
+                Enter your full name.
+              </p>
+            )}
+          </div>
+          <div>
+            <label htmlFor={`${id}-email`} className="text-[13px] font-medium text-fg">
+              Email
+            </label>
+            <input
+              id={`${id}-email`}
+              type="email"
+              inputMode="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              maxLength={200}
+              aria-invalid={checked && !emailOk}
+              aria-describedby={checked && !emailOk ? `${id}-email-error` : undefined}
+              className={inputClass(checked && !emailOk)}
+            />
+            {checked && !emailOk && (
+              <p id={`${id}-email-error`} className="mt-1 text-xs text-danger">
+                That email doesn&apos;t look right. Check it and try again.
+              </p>
+            )}
+          </div>
+        </div>
+        {suggestion && (
+          <p className="mt-2 rounded-lg bg-inset px-3 py-2 text-[13px] text-fg-2" aria-live="polite">
+            Did you mean <span className="font-semibold text-fg [overflow-wrap:anywhere]">{suggestion}</span>?{" "}
+            <button
+              type="button"
+              onClick={() => setEmail(suggestion)}
+              className="font-semibold text-brand underline underline-offset-2"
+            >
+              Use this
+            </button>
+          </p>
+        )}
+        <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <motion.button
+            type="submit"
+            {...pressable}
+            disabled={disabled}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3.5 py-2 text-sm font-semibold text-on-ink transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Send details
+          </motion.button>
+          <span className="text-xs text-fg-3">The quote shows this email again before anything is booked.</span>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
 export type QuoteState = "active" | "booked" | "superseded";
 
 export function QuoteCard({
@@ -295,7 +420,7 @@ export function QuoteCard({
         <motion.div variants={fadeUp} className="num mt-0.5 text-[15px] text-fg-2">
           {str(data.when)}
         </motion.div>
-        <motion.dl variants={fadeUp} className="mt-3 grid grid-cols-3 gap-3 text-[13px]">
+        <motion.dl variants={fadeUp} className="mt-3 grid grid-cols-2 gap-3 text-[13px]">
           <div>
             <dt className="text-fg-3">Duration</dt>
             <dd className="num font-medium text-fg">{str(data.duration)}</dd>
@@ -304,13 +429,15 @@ export function QuoteCard({
             <dt className="text-fg-3">Name</dt>
             <dd className="truncate font-medium text-fg">{str(data.customerName)}</dd>
           </div>
-          <div className="min-w-0">
-            <dt className="text-fg-3">Email</dt>
-            <dd className="truncate font-medium text-fg" title={str(data.customerEmail)}>
-              {str(data.customerEmail)}
-            </dd>
-          </div>
         </motion.dl>
+        {/* On its own line, in full: this is the customer's last chance to spot a typo. */}
+        <motion.div variants={fadeUp} className="mt-3 flex items-start gap-2.5 rounded-lg border border-line-strong px-3 py-2.5">
+          <MailIcon className="mt-0.5 h-4 w-4 shrink-0 text-fg-3" />
+          <div className="min-w-0">
+            <div className="text-xs text-fg-3">Confirmation email goes to</div>
+            <div className="text-[15px] font-semibold text-fg [overflow-wrap:anywhere]">{str(data.customerEmail)}</div>
+          </div>
+        </motion.div>
       </motion.div>
 
       <div className="mx-4 mt-3.5 rounded-lg bg-inset px-3.5 py-3">
@@ -349,17 +476,9 @@ export function QuoteCard({
       {state === "active" ? (
         <div className="px-4 pb-4 pt-3.5">
           <p className="text-[13px] text-fg-2">
-            {replaces ? (
-              <>
-                Confirming moves {replaces.refCode} to this time. It will be cancelled, and the new reference is
-                emailed to <span className="font-medium text-fg [overflow-wrap:anywhere]">{str(data.customerEmail)}</span>.
-              </>
-            ) : (
-              <>
-                Confirming books {str(data.roomName)} and emails the confirmation to{" "}
-                <span className="font-medium text-fg [overflow-wrap:anywhere]">{str(data.customerEmail)}</span>.
-              </>
-            )}
+            {replaces
+              ? `Check the email address above. Confirming moves ${replaces.refCode} to this time: it will be cancelled, and the new reference is emailed there.`
+              : `Check the email address above. Confirming books ${str(data.roomName)} and sends the confirmation there.`}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <PrimaryButton onClick={onConfirm} disabled={disabled}>

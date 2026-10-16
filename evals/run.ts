@@ -387,6 +387,23 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: "details-form-sentence",
+    // What the details form in the chat sends.
+    messages: [
+      "Is Room B free on Thursday 15 Oct from 10am to 12pm?",
+      "My name is Lee Wong and my email is lee@example.com.",
+      "Yes, please confirm the booking.",
+    ],
+    async check({ turns, bookings }) {
+      const draft = results(turns[1], "create_booking_draft").find((r) => r.ok);
+      const b = await bookings();
+      return [
+        ...expect(draft?.data.customerName === "Lee Wong" && draft?.data.customerEmail === "lee@example.com", `draft: ${JSON.stringify(draft?.data)}`),
+        ...expect(b.length === 1 && b[0].customer_email === "lee@example.com" && b[0].total_cents === 200_00, `bookings: ${JSON.stringify(b)}`),
+      ];
+    },
+  },
+  {
     name: "edge-price-question-then-yes-books-once",
     messages: [
       "Hi, I'm Tom Lee, tom@example.com. How much would Room A be on Tuesday 13 Oct from 8am to 12pm?",

@@ -288,6 +288,52 @@ export function describeStep(p: ToolPart): StepSummary {
   return { tone: "ok", title: p.name };
 }
 
+export interface DetailsRequest {
+  /** Prefilled values, e.g. after the assistant rejected a mistyped email. */
+  name: string;
+  email: string;
+  retry: boolean;
+}
+
+const HAS_DETAILS = new Set(["create_booking_draft", "confirm_booking", "find_booking", "request_cancellation"]);
+
+/**
+ * When the chat should offer the name-and-email form: the latest reply found a
+ * free room for the requested time and the customer's details aren't known
+ * yet, or the assistant just rejected a mistyped name or email. Derived from
+ * tool results like everything else here, not from the reply's wording.
+ */
+export function detailsRequest(messages: ChatMessage[]): DetailsRequest | null {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "assistant" || last.error) return null;
+  // Already on file: a quote, booking or lookup carried them.
+  if (toolParts(messages).some((p) => p.result?.ok && HAS_DETAILS.has(p.name))) return null;
+  // Managing an existing booking needs its reference, not this form.
+  const mentionsRef = messages.some(
+    (m) => m.role === "user" && m.parts.some((p) => p.kind === "text" && /\bEE-[A-Z0-9]{6}\b/i.test(p.text)),
+  );
+  if (mentionsRef) return null;
+
+  const tools = last.parts.filter((p): p is ToolPart => p.kind === "tool");
+  const rejected = tools.find(
+    (p) =>
+      p.name === "create_booking_draft" &&
+      p.result &&
+      !p.result.ok &&
+      ["INVALID_EMAIL", "INVALID_NAME"].includes(String(p.result.data.error_code)),
+  );
+  if (rejected) {
+    const input = (rejected.input ?? {}) as { customer_name?: string; customer_email?: string };
+    return { name: input.customer_name ?? "", email: input.customer_email ?? "", retry: true };
+  }
+  const free = tools.some((p) => {
+    if (p.name !== "check_availability" || !p.result?.ok) return false;
+    const requested = p.result.data.requested as { rooms?: Array<{ available?: boolean }> } | null;
+    return Boolean(requested?.rooms?.some((r) => r.available));
+  });
+  return free ? { name: "", email: "", retry: false } : null;
+}
+
 /** Suggested next replies for the current stage of the booking. */
 export function quickReplies(progress: BookingProgress, quoteActive: boolean, cancelActive: boolean): string[] {
   if (cancelActive) return ["Yes, cancel it", "No, keep my booking"];

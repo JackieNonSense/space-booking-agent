@@ -226,6 +226,123 @@ try {
     assert((await page.getByText("Hello there.").count()) === 0, "old reply still shown");
   });
 
+  // ---- details form ----------------------------------------------------------------
+  const detailsForm = (page) => page.locator("form").filter({ has: page.getByRole("button", { name: "Send details" }) });
+  // A reply that found Room B free and asks for the customer's details.
+  const freeRoomReply = (question) =>
+    ndjson([
+      { type: "conversation", id: "cv_fake0000000000" },
+      { type: "tool_call", id: "t1", name: "check_availability", input: { date: "2026-10-21", room: "B" } },
+      {
+        type: "tool_result",
+        id: "t1",
+        name: "check_availability",
+        ok: true,
+        ms: 9,
+        data: {
+          date: "2026-10-21",
+          dateLabel: "Wednesday 21 October 2026",
+          freeWindows: {},
+          requested: { start: "14:00", end: "18:00", rooms: [{ room: "B", roomName: "Room B", available: true }] },
+          alternatives: [],
+        },
+      },
+      { type: "text", delta: question },
+      { type: "done" },
+    ]);
+
+  await check("details form: checks the email, suggests a fix, then sends one plain sentence", async (page) => {
+    const bodies = [];
+    await page.route("**/api/chat", async (route) => {
+      bodies.push(route.request().postDataJSON());
+      const body = bodies.length === 1 ? freeRoomReply("Room B is free then. What name and email should I use?") : fakeReply("Thanks!");
+      await route.fulfill({ status: 200, contentType: "application/x-ndjson", body });
+    });
+    await page.goto(base, { waitUntil: "networkidle" });
+    await send(page, "Room B on Wednesday from 2pm to 6pm");
+    const form = detailsForm(page);
+    await form.waitFor();
+    await form.getByLabel("Full name").fill("Jane Citizen");
+    await form.getByLabel("Email").fill("jane@gmial");
+    await form.getByRole("button", { name: "Send details" }).click();
+    await form.getByText("That email doesn't look right").waitFor();
+    assert(bodies.length === 1, "sent an invalid email");
+    await form.getByLabel("Email").fill("jane@gmial.com");
+    await form.getByText("jane@gmail.com").waitFor();
+    await form.getByRole("button", { name: "Use this" }).click();
+    assert((await form.getByLabel("Email").inputValue()) === "jane@gmail.com", "suggestion not applied");
+    await form.getByRole("button", { name: "Send details" }).click();
+    await page.getByText("Thanks!").waitFor();
+    assert(
+      bodies[1]?.message === "My name is Jane Citizen and my email is jane@gmail.com.",
+      `sent: ${bodies[1]?.message}`,
+    );
+    assert((await detailsForm(page).count()) === 0, "form still shown");
+  });
+
+  await check("details form: answers in Chinese when the customer writes Chinese", async (page) => {
+    const bodies = [];
+    await page.route("**/api/chat", async (route) => {
+      bodies.push(route.request().postDataJSON());
+      const body = bodies.length === 1 ? freeRoomReply("B 房间有空。请告诉我您的姓名和邮箱。") : fakeReply("谢谢！");
+      await route.fulfill({ status: 200, contentType: "application/x-ndjson", body });
+    });
+    await page.goto(base, { waitUntil: "networkidle" });
+    await send(page, "我想订周三下午2点到6点的B房间");
+    const form = detailsForm(page);
+    await form.getByLabel("Full name").fill("王小明");
+    await form.getByLabel("Email").fill("xiaoming@gmail.com");
+    await form.getByRole("button", { name: "Send details" }).click();
+    await page.getByText("谢谢！").waitFor();
+    assert(bodies[1]?.message === "我叫王小明，邮箱是 xiaoming@gmail.com。", `sent: ${bodies[1]?.message}`);
+  });
+
+  await check(
+    "details form: fits a phone screen",
+    async (page) => {
+      await fakeChat(page, freeRoomReply("Room B is free then. What name and email should I use?"));
+      await page.goto(base, { waitUntil: "networkidle" });
+      await send(page, "Room B on Wednesday from 2pm to 6pm");
+      const form = detailsForm(page);
+      await form.waitFor();
+      await form.getByLabel("Email").fill("maximiliana.konstantinopoulou@an-exceptionally-long-domain-name.con");
+      await page.waitForTimeout(500);
+      await noOverflow(page, "details form");
+      await noClippedText(page, "details form");
+      await form.screenshot({ path: join(outDir, "details-form-phone.png") });
+    },
+    { viewport: { width: 390, height: 844 }, mobile: true },
+  );
+
+  await check("real booking through the details form", async (page) => {
+    await page.goto(base, { waitUntil: "networkidle" });
+    // A Wednesday with Room B free 7–9 pm.
+    const iso = (ms) => new Date(ms).toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+    const weekday = (ms) => new Date(ms).toLocaleDateString("en-AU", { timeZone: "Australia/Sydney", weekday: "long" });
+    let t = Date.now() + 2 * 864e5;
+    while (weekday(t) !== "Wednesday") t += 864e5;
+    for (;; t += 7 * 864e5) {
+      const day = await (await page.request.get(`${base}/api/day?date=${iso(t)}`)).json();
+      assert(!day.error, `no free Wednesday evening found (${day.error})`);
+      if (!day.rooms.B.some((b) => b.start < "21:00" && b.end > "19:00")) break;
+    }
+    const day = new Date(t).toLocaleDateString("en-AU", { timeZone: "Australia/Sydney", weekday: "long", day: "numeric", month: "long" });
+    await send(page, `Is Room B free on ${day} from 7pm to 9pm?`);
+    const form = detailsForm(page);
+    await form.waitFor({ timeout: 120_000 });
+    await form.getByLabel("Full name").fill("Form Tester");
+    await form.getByLabel("Email").fill("form.tester@example.com");
+    await form.getByRole("button", { name: "Send details" }).click();
+    const confirm = page.getByRole("button", { name: /^Confirm and book/ });
+    await confirm.waitFor({ timeout: 120_000 });
+    await page.getByText("Confirmation email goes to").waitFor();
+    await page.getByText("form.tester@example.com").first().waitFor();
+    await page.waitForFunction(() => !document.querySelector('[aria-label="Assistant is typing"]'), null, { timeout: 120_000 });
+    await page.screenshot({ path: join(outDir, "details-form-quote.png") });
+    await confirm.click();
+    await page.getByText("Booking confirmed").waitFor({ timeout: 120_000 });
+  });
+
   // ---- slot picker ---------------------------------------------------------------
   await check("picker closes with Esc, the close button and the backdrop", async (page) => {
     await page.goto(base, { waitUntil: "networkidle" });

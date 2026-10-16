@@ -11,6 +11,7 @@ import {
   CancellationCard,
   CancelledCard,
   ConfirmedCard,
+  DetailsCard,
   EmailCard,
   PriceCard,
   QuoteCard,
@@ -19,6 +20,7 @@ import {
 import {
   bookedIds,
   bookingProgress,
+  detailsRequest,
   focusSlot,
   cancellationStates,
   quickReplies,
@@ -324,7 +326,14 @@ export function BookingApp() {
   const last = messages[messages.length - 1];
   const lastPart = last?.parts[last.parts.length - 1];
   const showTyping = busy && last?.role === "assistant" && (!lastPart || (lastPart.kind === "tool" && !!lastPart.result));
-  const replies = !busy && last?.role === "assistant" && !last.error ? quickReplies(progress, quoteActive, cancelActive) : [];
+  const details = busy ? null : detailsRequest(messages);
+  const replies =
+    !busy && last?.role === "assistant" && !last.error && !details ? quickReplies(progress, quoteActive, cancelActive) : [];
+  // Sent as an ordinary message in the customer's language, so the assistant reads it like typed text.
+  const sendDetails = (name: string, email: string) =>
+    void send(
+      langOf(lastUserText()) === "zh" ? `我叫${name}，邮箱是 ${email}。` : `My name is ${name} and my email is ${email}.`,
+    );
 
   return (
     <MotionConfig reducedMotion="user">
@@ -519,6 +528,15 @@ export function BookingApp() {
                               </motion.button>
                             )}
                           </motion.div>
+                        )}
+                        {mi === messages.length - 1 && details && (
+                          <DetailsCard
+                            key={m.id}
+                            initial={details}
+                            retry={details.retry}
+                            disabled={busy}
+                            onSubmit={sendDetails}
+                          />
                         )}
                         {mi === messages.length - 1 && replies.length > 0 && (
                           <motion.div className="flex flex-wrap gap-2 pt-1" variants={stagger(0.05, 0.15)} initial="hidden" animate="show">

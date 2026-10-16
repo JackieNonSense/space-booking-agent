@@ -9,6 +9,7 @@ import {
   TIMEZONE,
   type RoomId,
 } from "./config";
+import { isValidEmail, isValidName, normaliseEmail, normaliseName } from "./contact";
 import { PG_EXCLUSION_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode, type Db } from "./db";
 import { BookingError } from "./errors";
 import { newId, newRefCode } from "./ids";
@@ -348,8 +349,6 @@ export async function checkAvailability(db: Db, input: AvailabilityInput, now: D
 // ---------------------------------------------------------------------------
 // Drafts and bookings
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
 export interface DraftInput extends SlotInput {
   room: RoomId;
   customer_name: string;
@@ -363,12 +362,12 @@ export async function createDraft(
   input: DraftInput,
   ctx: { conversationId: string; userTurn: number; now: DateTime },
 ): Promise<DraftView> {
-  const name = input.customer_name.trim().replace(/\s+/g, " ");
-  const email = input.customer_email.trim().toLowerCase();
-  if (name.length < 2 || name.length > 100) {
+  const name = normaliseName(input.customer_name);
+  const email = normaliseEmail(input.customer_email);
+  if (!isValidName(name)) {
     throw new BookingError("INVALID_NAME", "Ask the customer for their full name.");
   }
-  if (!EMAIL_RE.test(email) || email.length > 200) {
+  if (!isValidEmail(email)) {
     throw new BookingError("INVALID_EMAIL", `"${input.customer_email}" doesn't look like a valid email address.`);
   }
   if (!ROOM_IDS.includes(input.room)) {
