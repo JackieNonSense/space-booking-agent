@@ -14,6 +14,7 @@ import { BookingError } from "./errors";
 import { newId, newRefCode } from "./ids";
 import { calculatePrice, cheaperLongerOption, formatHours, formatMoney } from "./pricing";
 import {
+  assertBookableDate,
   clock,
   clockLabel,
   dateLabel,
@@ -300,10 +301,7 @@ export interface AvailabilityInput {
 }
 
 export async function checkAvailability(db: Db, input: AvailabilityInput, now: DateTime) {
-  const date = parseDate(input.date).toISODate()!;
-  if (parseDate(date) < now.startOf("day")) {
-    throw new BookingError("IN_PAST", `${dateLabel(date)} has already passed.`);
-  }
+  const date = assertBookableDate(input.date, now).toISODate()!;
   const busy = await busyByRoom(db, date);
   const from = earliestStart(date, now);
   const rooms = input.room ? [input.room] : ROOM_IDS;
@@ -672,6 +670,23 @@ export async function getBooking(db: Db, bookingId: string): Promise<BookingView
     [bookingId],
   );
   return row ? rowToView(row) : null;
+}
+
+/**
+ * Whether a conversation made this booking or cancelled it. Emails are only
+ * sent for those, so a prompt can't point the email tool at someone else's
+ * booking (or a demo one, whose ids are predictable).
+ */
+export async function touchedByConversation(db: Db, bookingId: string, conversationId: string): Promise<boolean> {
+  const [row] = await db.query(
+    `SELECT 1 FROM bookings b
+      WHERE (b.id = $1 OR b.ref_code = $1) AND b.source <> 'seed'
+        AND (b.conversation_id = $2
+             OR EXISTS (SELECT 1 FROM pending_cancellations pc
+                         WHERE pc.booking_id = b.id AND pc.conversation_id = $2))`,
+    [bookingId, conversationId],
+  );
+  return Boolean(row);
 }
 
 /** Public schedule for the timeline: time blocks only, no customer details. */

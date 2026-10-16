@@ -50,13 +50,15 @@ The model holds the conversation and extracts dates, times and details. Everythi
 - **A booking is only revealed with its reference and its email together**, and either one wrong gives the same answer.
 - **Emails can't go wrong or go twice.** Each email (confirmed, updated, cancelled) is built from the stored booking and sent at most once. If the model forgets to send one, the server sends it.
 - **Server-side history.** The conversation is stored on the server, so a client can't inject fake tool results.
+- **A dropped connection doesn't lose a booking.** If the customer closes the tab mid-reply, the turn still finishes on the server: the booking is saved and the email goes out.
 
 Assumptions: Australian Eastern time (AEDT); open 8am to 10pm daily; bookings in 30-minute steps, at least 1 hour, within one day; both rooms at $100/hour.
 
 ## Testing
 
-- **98 unit tests** (`npm test`): pricing boundaries (3 h = $300, 4 h = $340, 4.5 h = $382.50, 5 h = $425), time parsing, availability, the confirmation rule, concurrent bookings, moving into an overlapping slot, a move that loses its slot leaving the original intact, cancellation, email idempotency per kind, upgrading an older database schema in place, masking, and the agent loop against a scripted model.
-- **14 end-to-end conversation evals** (`npm run eval`) run against the real model and check the database afterwards, including the 4-hour discount, room conflicts, refusing to skip confirmation, saying yes twice, correcting an email, haggling, moving a booking, cancelling only after confirmation, refusing a wrong email, and a request in Chinese. Latest run: **14/14 passed** on Claude Sonnet 5.5, median reply 5.6 s, about $0.35 for the suite.
+- **144 unit tests** (`npm test`): pricing boundaries (3 h = $300, 4 h = $340, 4.5 h = $382.50, 5 h = $425, a full 14-hour day = $1,190), time parsing, opening hours and the 180-day window, daylight-saving changeover days, availability, the confirmation rule, concurrent bookings, moving into an overlapping slot, a move that loses its slot leaving the original intact, cancellation, email idempotency per kind, the email tool refusing bookings from other conversations, upgrading an older database schema in place, masking, rate limits, and the agent loop against a scripted model, including a tool crashing mid-turn.
+- **33 end-to-end conversation evals** (`npm run eval`) run against the real model and check the database afterwards: the 4-hour discount, an 8-hour day, room conflicts, refusing to skip confirmation, saying yes twice, correcting an email, haggling and a "system override" price injection, moving a booking (including one from an earlier chat), cancelling only after confirmation, refusing a wrong email, a quote that expires before the yes, both rooms at once, past, too-early, too-late, too-short, off-grid and too-far-ahead times, an invalid email, phrasings like "half past two until six", and a request in Chinese. Latest run: **33/33 passed** on Claude Sonnet 5.5, median reply 6.0 s, about $0.75 for the suite.
+- **20 browser checks** (`node scripts/ui-edge.mjs <url>`, headless Chrome): blank and over-long messages, double sends, server errors with retry, rate limits, a reply cut off mid-stream, slot picker rules and keyboard use, reduced motion, layouts at phone width, and a real booking with a very long name and email.
 - `node scripts/contrast-check.mjs` verifies every colour pair in the design tokens meets WCAG AA.
 
 ## Run it locally

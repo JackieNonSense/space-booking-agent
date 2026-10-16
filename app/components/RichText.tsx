@@ -3,14 +3,27 @@ import { Fragment, type ReactNode } from "react";
 // The agent is asked for plain text with at most a short list, so a tiny
 // formatter (paragraphs, "- " bullets, **bold**) is all that's needed.
 
+/** Keeps booking references like EE-7K3Q9M on one line instead of splitting at the hyphen. */
+function refs(text: string): ReactNode[] {
+  return text.split(/(\bEE-[A-Z0-9]{6}\b)/g).map((chunk, i) =>
+    i % 2 ? (
+      <span key={i} className="whitespace-nowrap">
+        {chunk}
+      </span>
+    ) : (
+      <Fragment key={i}>{chunk}</Fragment>
+    ),
+  );
+}
+
 function inline(text: string): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) =>
     chunk.startsWith("**") && chunk.endsWith("**") ? (
       <strong key={i} className="font-semibold">
-        {chunk.slice(2, -2)}
+        {refs(chunk.slice(2, -2))}
       </strong>
     ) : (
-      <Fragment key={i}>{chunk}</Fragment>
+      <Fragment key={i}>{refs(chunk)}</Fragment>
     ),
   );
 }

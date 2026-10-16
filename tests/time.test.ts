@@ -80,6 +80,24 @@ describe("resolveSlot", () => {
     expect(codeOf(() => resolveSlot(input, NOW))).toBe(code);
   });
 
+  it.each([
+    // Daylight saving ends 4 Apr 2027 (03:00 AEDT -> 02:00 AEST) and starts 4 Oct 2026.
+    ["2027-04-04", "2027-04-04T14:00:00.000+10:00", "2027-04-04T18:00:00.000+10:00"],
+    ["2027-04-03", "2027-04-03T14:00:00.000+11:00", "2027-04-03T18:00:00.000+11:00"],
+  ])("keeps wall-clock times on %s around a daylight saving change", (date, start, end) => {
+    const slot = resolveSlot({ date, start_time: "14:00", end_time: "18:00" }, NOW);
+    expect(slot.start.toISO()).toBe(start);
+    expect(slot.end.toISO()).toBe(end);
+    expect(slot.durationMinutes).toBe(240);
+  });
+
+  it("keeps wall-clock times on the day daylight saving starts", () => {
+    const before = DateTime.fromISO("2026-09-30T09:00", { zone: TIMEZONE });
+    const slot = resolveSlot({ date: "2026-10-04", start_time: "09:00", end_time: "13:00" }, before);
+    expect(slot.start.toISO()).toBe("2026-10-04T09:00:00.000+11:00");
+    expect(slot.end.diff(slot.start, "minutes").minutes).toBe(240);
+  });
+
   it("allows a booking later today", () => {
     const slot = resolveSlot({ date: "2026-10-10", start_time: "10:00", end_time: "12:00" }, NOW);
     expect(slot.date).toBe("2026-10-10");

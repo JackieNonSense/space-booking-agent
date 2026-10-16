@@ -1,5 +1,5 @@
 import { scheduleBetween } from "@/lib/bookings";
-import { CLOSE_MINUTE, OPEN_MINUTE, TIMEZONE } from "@/lib/config";
+import { CLOSE_MINUTE, MAX_ADVANCE_DAYS, OPEN_MINUTE, TIMEZONE } from "@/lib/config";
 import { getDb } from "@/lib/db";
 import { ensureDemoSeed } from "@/lib/seed";
 import { studioNow } from "@/lib/time";
@@ -25,6 +25,7 @@ export async function GET(request: Request) {
       timezone: TIMEZONE,
       now: now.toISO(),
       today: now.toISODate(),
+      lastBookableDate: now.startOf("day").plus({ days: MAX_ADVANCE_DAYS }).toISODate(),
       openMinute: OPEN_MINUTE,
       closeMinute: CLOSE_MINUTE,
       days,

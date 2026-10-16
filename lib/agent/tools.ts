@@ -8,6 +8,7 @@ import {
   createDraft,
   findBooking,
   requestCancellation,
+  touchedByConversation,
 } from "../bookings";
 import type { Db } from "../db";
 import { sendBookingEmail, sendConfirmationEmail } from "../email";
@@ -313,6 +314,12 @@ async function dispatch(
 
     case "send_confirmation_email": {
       const i = input as z.infer<typeof inputs.send_confirmation_email>;
+      if (!(await touchedByConversation(ctx.db, i.booking_id, ctx.conversationId))) {
+        throw new BookingError(
+          "BOOKING_NOT_FOUND",
+          `There is no booking ${i.booking_id} from this conversation. Use the booking_id returned by confirm_booking.`,
+        );
+      }
       const result = await sendConfirmationEmail(ctx.db, i.booking_id);
       return { ...result, note: EMAIL_NOTES[result.status] };
     }

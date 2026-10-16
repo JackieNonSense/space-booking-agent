@@ -163,6 +163,45 @@ describe("agent loop", () => {
     expect(conversation.userTurns).toBe(0);
   });
 
+  it("keeps the transcript valid when a tool crashes mid-turn", async () => {
+    const conversation = await createConversation(db, NOW, null);
+    // The database fails when the draft is written, after the availability check ran.
+    const flaky: Db = {
+      ...db,
+      query: (async (text: string, params?: unknown[]) => {
+        if (/booking_drafts/.test(text)) throw new Error("connection reset");
+        return db.query(text, params);
+      }) as Db["query"],
+    };
+    const events: AgentEvent[] = [];
+    const { client } = fakeClient([
+      () => ({
+        content: [
+          toolUse("t1", "check_availability", { date: "2026-10-16", start_time: null, end_time: null, duration_hours: null, room: null }),
+          toolUse("t2", "create_booking_draft", {
+            room: "B", date: "2026-10-16", start_time: "14:00", end_time: "18:00", duration_hours: null,
+            customer_name: "Jane", customer_email: "jane@example.com", reschedule_reference: null,
+          }),
+        ],
+        stop_reason: "tool_use",
+      }),
+    ]);
+    await runAgentTurn({ db: flaky, conversation, userText: "Room B Friday 2-6pm", now: NOW, emit: (e) => events.push(e), client });
+
+    expect(events.at(-1)).toMatchObject({ type: "error" });
+    const [user, , assistant, results] = conversation.messages;
+    expect(user.role).toBe("user");
+    expect(assistant.role).toBe("assistant");
+    // Both tool calls are answered: the one that ran, and the one that crashed.
+    const blocks = results.content as Anthropic.Beta.BetaToolResultBlockParam[];
+    expect(blocks.map((b) => [b.tool_use_id, Boolean(b.is_error)])).toEqual([
+      ["t1", false],
+      ["t2", true],
+    ]);
+    expect(String(blocks[1].content)).toContain("INTERRUPTED");
+    expect(conversation.userTurns).toBe(1);
+  });
+
   it("returns tool errors to the model instead of crashing", async () => {
     const conversation = await createConversation(db, NOW, null);
     const events: AgentEvent[] = [];

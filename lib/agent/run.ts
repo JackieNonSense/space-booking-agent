@@ -49,6 +49,11 @@ export async function runAgentTurn({ db, conversation, userText, now, emit, clie
   messages.push({ role: "user", content: userText });
   messages.push({ role: "system", content: timeNote(now) });
 
+  // Tool calls whose results haven't been appended yet. If the turn breaks in
+  // between, they still get results, or every later request would be rejected.
+  let pending: { calls: Anthropic.Beta.BetaToolUseBlock[]; results: Anthropic.Beta.BetaToolResultBlockParam[] } | null =
+    null;
+
   try {
     for (let step = 0; step < MAX_STEPS; step++) {
       const stream = api.beta.messages.stream({
@@ -100,6 +105,7 @@ export async function runAgentTurn({ db, conversation, userText, now, emit, clie
 
       // Sequential on purpose: confirm_booking must finish before the email.
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
+      pending = { calls: toolUses, results };
       for (const call of toolUses) {
         emit({ type: "tool_call", id: call.id, name: call.name, input: call.input });
         const started = Date.now();
@@ -125,6 +131,7 @@ export async function runAgentTurn({ db, conversation, userText, now, emit, clie
         });
       }
       messages.push({ role: "user", content: results });
+      pending = null;
     }
   } catch (err) {
     if (messages.length === startLength + 2) {
@@ -133,6 +140,21 @@ export async function runAgentTurn({ db, conversation, userText, now, emit, clie
       throw err;
     }
     console.error("[agent] turn failed after partial progress", err);
+    if (pending) {
+      const answered = new Set(pending.results.map((r) => r.tool_use_id));
+      for (const call of pending.calls.filter((c) => !answered.has(c.id))) {
+        pending.results.push({
+          type: "tool_result",
+          tool_use_id: call.id,
+          content: JSON.stringify({
+            error_code: "INTERRUPTED",
+            message: "This step failed on the server and may not have run. Check the current state before retrying it.",
+          }),
+          is_error: true,
+        });
+      }
+      messages.push({ role: "user", content: pending.results });
+    }
     emit({ type: "error", message: "The assistant stopped unexpectedly. Please send your last message again." });
   }
 

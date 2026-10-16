@@ -165,7 +165,9 @@ export function Schedule({
         blocksOn={blocksOn}
         focus={focus?.date === selected ? focus : null}
         highlightIds={highlightIds}
-        onPick={onPick}
+        // Days past the booking window are shown but can't be picked.
+        onPick={selected <= schedule.lastBookableDate ? onPick : undefined}
+        notOpen={selected > schedule.lastBookableDate}
       />
 
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 border-t border-line px-4 py-3 text-xs text-fg-2">
@@ -189,6 +191,7 @@ function DayView({
   focus,
   highlightIds,
   onPick,
+  notOpen = false,
 }: {
   date: string;
   isToday: boolean;
@@ -199,6 +202,7 @@ function DayView({
   focus: FocusSlot | null;
   highlightIds: Set<string>;
   onPick?: (request: PickerRequest) => void;
+  notOpen?: boolean;
 }) {
   const [hover, setHover] = useState<{ room: "A" | "B"; minute: number } | null>(null);
   const height = ((close - open) / 60) * HOUR_PX;
@@ -244,6 +248,7 @@ function DayView({
             Pick a time
           </motion.button>
         )}
+        {notOpen && <span className="text-[13px] text-fg-3">Not open for booking yet</span>}
       </div>
 
       <div className="mt-2 grid grid-cols-[2.75rem_1fr_1fr] gap-x-1.5 text-[13px] font-medium text-fg-2">

@@ -1,9 +1,9 @@
 import { busyByRoom } from "@/lib/bookings";
-import { CLOSE_MINUTE, MAX_ADVANCE_DAYS, OPEN_MINUTE, ROOM_IDS } from "@/lib/config";
+import { CLOSE_MINUTE, OPEN_MINUTE, ROOM_IDS } from "@/lib/config";
 import { getDb } from "@/lib/db";
 import { BookingError } from "@/lib/errors";
 import { ensureDemoSeed } from "@/lib/seed";
-import { clock, dateLabel, parseDate, studioNow } from "@/lib/time";
+import { assertBookableDate, clock, dateLabel, studioNow } from "@/lib/time";
 
 /**
  * Busy time per room for one day, for the slot picker. Time blocks only, no
@@ -13,10 +13,7 @@ export async function GET(request: Request) {
   const date = new URL(request.url).searchParams.get("date") ?? "";
   const now = studioNow();
   try {
-    const day = parseDate(date);
-    if (day < now.startOf("day") || day > now.startOf("day").plus({ days: MAX_ADVANCE_DAYS })) {
-      return Response.json({ error: "That date can't be booked." }, { status: 400 });
-    }
+    assertBookableDate(date, now);
   } catch (err) {
     if (err instanceof BookingError) return Response.json({ error: err.message }, { status: 400 });
     throw err;

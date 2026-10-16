@@ -194,7 +194,8 @@ export function StudioConsole() {
                 <Kpi label="Median time to book" value={duration(data.kpis.medianSecondsToBook)} note="From first message to confirmed" />
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+              {/* minmax(0, …) on phones too, or the bookings table's min width stretches every card. */}
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
                 <Panel title="Bookings" aside={<span className="text-xs text-fg-3">Most recent first</span>}>
                   {data.bookings.length === 0 ? (
                     <p className="text-sm text-fg-2">No bookings from the assistant yet. Make one in the assistant and refresh.</p>

@@ -351,12 +351,12 @@ export function QuoteCard({
             {replaces ? (
               <>
                 Confirming moves {replaces.refCode} to this time. It will be cancelled, and the new reference is
-                emailed to <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+                emailed to <span className="font-medium text-fg [overflow-wrap:anywhere]">{str(data.customerEmail)}</span>.
               </>
             ) : (
               <>
                 Confirming books {str(data.roomName)} and emails the confirmation to{" "}
-                <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+                <span className="font-medium text-fg [overflow-wrap:anywhere]">{str(data.customerEmail)}</span>.
               </>
             )}
           </p>
@@ -553,7 +553,7 @@ export function CancellationCard({
         <div className="border-t border-line px-4 pb-4 pt-3">
           <p className="text-[13px] text-fg-2">
             Cancelling releases this time. A cancellation notice goes to{" "}
-            <span className="font-medium text-fg">{str(data.customerEmail)}</span>.
+            <span className="font-medium text-fg [overflow-wrap:anywhere]">{str(data.customerEmail)}</span>.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <motion.button
@@ -651,7 +651,8 @@ export function EmailCard({ data, automatic, bookingId }: { data: Data; automati
           <MailIcon className="h-4 w-4" />
         </motion.span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-fg">{title}</div>
+          {/* Long addresses have no natural break points. */}
+          <div className="text-sm font-semibold text-fg [overflow-wrap:anywhere]">{title}</div>
           {str(data.subject) && <div className="mt-0.5 truncate text-[13px] text-fg-2">{str(data.subject)}</div>}
           {(detail || automatic) && (
             <div className="mt-1 text-xs text-fg-3">

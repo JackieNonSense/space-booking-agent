@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { after } from "next/server";
 import { z } from "zod";
 import {
   createConversation,
@@ -65,28 +66,50 @@ export async function POST(request: Request) {
   }
   const expectedTurns = conversation.userTurns;
 
+  // The visitor may close the tab mid-turn. The turn still runs to the end, so
+  // a booking confirmed a moment earlier is saved and emailed; only the
+  // writing to the stream stops.
   const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const emit = (event: AgentEvent) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-      };
-      emit({ type: "conversation", id: conversation.id });
-      try {
-        const usage = await runAgentTurn({ db, conversation, userText: parsed.data.message, now, emit });
-        if (!(await saveConversation(db, conversation, expectedTurns))) {
-          console.warn(`[chat] concurrent update to ${conversation.id}; this turn was not saved`);
-        }
-        emit({ type: "done", usage });
-      } catch (err) {
-        console.error("[chat] turn failed", err);
-        emit({ type: "error", message: friendlyError(err) });
-        emit({ type: "done" });
-      } finally {
-        controller.close();
-      }
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let open = true;
+  const stream = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+    cancel() {
+      open = false;
     },
   });
+  const emit = (event: AgentEvent) => {
+    if (!open) return;
+    try {
+      controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+    } catch {
+      open = false;
+    }
+  };
+
+  const turn = (async () => {
+    emit({ type: "conversation", id: conversation.id });
+    try {
+      const usage = await runAgentTurn({ db, conversation, userText: parsed.data.message, now, emit });
+      if (!(await saveConversation(db, conversation, expectedTurns))) {
+        console.warn(`[chat] concurrent update to ${conversation.id}; this turn was not saved`);
+      }
+      emit({ type: "done", usage });
+    } catch (err) {
+      console.error("[chat] turn failed", err);
+      emit({ type: "error", message: friendlyError(err) });
+      emit({ type: "done" });
+    } finally {
+      if (open) {
+        open = false;
+        controller.close();
+      }
+    }
+  })();
+  // Keeps the function alive until the turn finishes, even after a disconnect.
+  after(turn);
 
   return new Response(stream, {
     headers: {

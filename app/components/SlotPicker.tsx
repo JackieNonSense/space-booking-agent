@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MAX_ADVANCE_DAYS } from "@/lib/config";
 import { calculatePrice, cheaperLongerOption, formatMoney } from "@/lib/pricing";
 import { XIcon } from "./icons";
 import { EASE, pressable } from "./motion";
@@ -90,7 +91,17 @@ export function SlotPicker({
     };
   }, [date]);
 
-  const days = useMemo(() => Array.from({ length: 14 }, (_, i) => addDays(today, i)), [today]);
+  // Two weeks of day chips: from today, or around a later day picked on the
+  // schedule, never past the last bookable day.
+  const lastDay = addDays(today, MAX_ADVANCE_DAYS);
+  const [firstDay] = useState(() =>
+    date <= addDays(today, 13) ? today : [addDays(date, -3), addDays(lastDay, -13)].sort()[0],
+  );
+  const days = useMemo(() => Array.from({ length: 14 }, (_, i) => addDays(firstDay, i)), [firstDay]);
+  const dayRow = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    dayRow.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, []);
   const loaded = day?.date === date ? day : null;
 
   // Everything below is derived, so switching day or room never leaves a stale choice selected.
@@ -172,7 +183,7 @@ export function SlotPicker({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* Day */}
-          <div role="group" aria-label="Day" className="-mx-5 flex gap-1.5 overflow-x-auto px-5 pb-1">
+          <div ref={dayRow} role="group" aria-label="Day" className="-mx-5 flex gap-1.5 overflow-x-auto px-5 pb-1">
             {days.map((d) => {
               const selected = d === date;
               return (
@@ -220,7 +231,10 @@ export function SlotPicker({
 
           {/* Start */}
           <div>
-            <div className="mb-2 text-[13px] font-semibold">Start time</div>
+            <div className="mb-2 text-[13px] font-semibold">
+              Start time{" "}
+              <span className="font-normal text-fg-3">· {fmt(date, { weekday: "long", day: "numeric", month: "long" })}</span>
+            </div>
             {error ? (
               <p className="text-sm text-danger">{error}</p>
             ) : !loaded ? (

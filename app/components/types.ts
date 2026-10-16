@@ -16,6 +16,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   parts: Part[];
   error?: string;
+  /** The reply was cut off, so the client can't tell whether the server finished the turn. */
+  dropped?: boolean;
   usage?: { inputTokens: number; outputTokens: number; cachedTokens: number; steps: number };
 }
 
@@ -32,6 +34,8 @@ export interface Schedule {
   timezone: string;
   now: string;
   today: string;
+  /** Last day bookings are open for, "YYYY-MM-DD". */
+  lastBookableDate: string;
   openMinute: number;
   closeMinute: number;
   days: Array<{ date: string; weekday: string; label: string }>;

@@ -84,8 +84,36 @@ export function dateLabel(date: string): string {
   return parseDate(date).toFormat("cccc d LLLL yyyy");
 }
 
+/**
+ * The studio wall-clock time `minute` minutes after midnight on `date`.
+ * Built from the clock reading rather than "midnight plus N minutes", which
+ * would be an hour off on the days daylight saving starts or ends.
+ */
 export function atMinute(date: string, minute: number): DateTime {
-  return parseDate(date).plus({ minutes: minute });
+  const day = parseDate(date).plus({ days: Math.floor(minute / 1440) });
+  const m = minute % 1440;
+  return DateTime.fromObject(
+    { year: day.year, month: day.month, day: day.day, hour: Math.floor(m / 60), minute: m % 60 },
+    { zone: TIMEZONE },
+  );
+}
+
+/**
+ * Throws unless `date` is today or a later day within the booking window.
+ * Counted in whole days, so every slot on the last open day can be booked.
+ */
+export function assertBookableDate(date: string, now: DateTime = studioNow()): DateTime {
+  const day = parseDate(date);
+  const today = now.startOf("day");
+  if (day < today) {
+    throw new BookingError("IN_PAST", `${dateLabel(date)} has already passed.`);
+  }
+  if (day > today.plus({ days: MAX_ADVANCE_DAYS })) {
+    throw new BookingError("TOO_FAR_AHEAD", `Bookings open up to ${MAX_ADVANCE_DAYS} days in advance.`, {
+      lastBookableDate: today.plus({ days: MAX_ADVANCE_DAYS }).toISODate(),
+    });
+  }
+  return day;
 }
 
 /**
@@ -149,19 +177,14 @@ export function resolveSlot(input: SlotInput, now: DateTime = studioNow()): Slot
     throw new BookingError("TOO_SHORT", `The minimum booking is ${MIN_BOOKING_MINUTES / 60} hour.`);
   }
 
-  const start = day.plus({ minutes: startMinute });
-  const end = day.plus({ minutes: endMinute });
+  const start = atMinute(input.date, startMinute);
+  const end = atMinute(input.date, endMinute);
   if (start <= now) {
     throw new BookingError("IN_PAST", "That time has already passed. Pick a future time.", {
       now: now.toISO(),
     });
   }
-  if (start > now.plus({ days: MAX_ADVANCE_DAYS })) {
-    throw new BookingError(
-      "TOO_FAR_AHEAD",
-      `Bookings open up to ${MAX_ADVANCE_DAYS} days in advance.`,
-    );
-  }
+  assertBookableDate(input.date, now);
 
   return { date: day.toISODate()!, startMinute, endMinute, start, end, durationMinutes };
 }

@@ -49,6 +49,17 @@ const studioToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Au
 /** Lets screen readers switch voices for replies written in Chinese. */
 const langOf = (text: string) => (/[一-鿿]/.test(text) ? "zh" : undefined);
 
+/** What the customer can safely assume after an error, without overclaiming either way. */
+function errorOutcome(m: ChatMessage): string {
+  const changed = m.parts.some(
+    (p) => p.kind === "tool" && p.result?.ok && (p.name === "confirm_booking" || p.name === "confirm_cancellation"),
+  );
+  if (changed) return "The steps shown above did go through.";
+  // The server finishes the turn even when the reply is cut off.
+  if (m.dropped) return "If you had just confirmed something, it may still have gone through, and the email will say so.";
+  return "Nothing was booked as a result.";
+}
+
 function Mark({ size = "md" }: { size?: "md" | "lg" }) {
   const box = size === "lg" ? "h-10 w-10 rounded-xl" : "h-7 w-7 rounded-lg";
   const icon = size === "lg" ? "h-5 w-5" : "h-4 w-4";
@@ -198,6 +209,7 @@ export function BookingApp() {
       }
       const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = "";
+      let finished = false;
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -206,11 +218,16 @@ export function BookingApp() {
         while ((newline = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, newline).trim();
           buffer = buffer.slice(newline + 1);
-          if (line) handleEvent(JSON.parse(line) as AgentEvent);
+          if (!line) continue;
+          const event = JSON.parse(line) as AgentEvent;
+          if (event.type === "done") finished = true;
+          handleEvent(event);
         }
       }
+      // A stream that ends without "done" was cut off (e.g. a platform timeout).
+      if (!finished) throw new Error("stream ended early");
     } catch {
-      updateAssistant((m) => ({ ...m, error: "The connection dropped before the reply finished." }));
+      updateAssistant((m) => ({ ...m, error: "The connection dropped before the reply finished.", dropped: true }));
     } finally {
       setBusy(false);
       void loadSchedule(week);
@@ -316,7 +333,8 @@ export function BookingApp() {
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
             <div className="flex min-w-0 items-center gap-3">
               <Mark size="lg" />
-              <div className="min-w-0">
+              {/* Too narrow on phones to show without truncating; screen readers still get it. */}
+              <div className="min-w-0 max-sm:sr-only">
                 <h1 className="truncate text-[15px] font-semibold leading-tight text-fg">Room Booking Assistant</h1>
                 <p className="truncate text-[13px] text-fg-3">Eastern Essence Studio</p>
               </div>
@@ -451,7 +469,7 @@ export function BookingApp() {
                     >
                       <div
                         lang={langOf((m.parts[0] as { text: string }).text)}
-                        className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-hover px-4 py-2.5 text-[15px] leading-relaxed text-fg"
+                        className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-hover px-4 py-2.5 text-[15px] leading-relaxed text-fg [overflow-wrap:anywhere]"
                       >
                         {(m.parts[0] as { text: string }).text}
                       </div>
@@ -463,7 +481,7 @@ export function BookingApp() {
                         {m.parts.map((p, pi) =>
                           p.kind === "text" ? (
                             p.text.trim() && (
-                              <motion.div key={pi} lang={langOf(p.text)} variants={fadeUp} initial="hidden" animate="show" className="text-[15px] leading-7 text-fg">
+                              <motion.div key={pi} lang={langOf(p.text)} variants={fadeUp} initial="hidden" animate="show" className="text-[15px] leading-7 text-fg [overflow-wrap:anywhere]">
                                 <RichText text={p.text} />
                                 {busy && mi === messages.length - 1 && pi === m.parts.length - 1 && (
                                   <span className="caret ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 bg-fg" aria-hidden />
@@ -485,7 +503,9 @@ export function BookingApp() {
                             <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
                             <div className="min-w-0 flex-1 text-sm">
                               <div className="font-semibold text-danger">That didn&apos;t go through</div>
-                              <div className="mt-0.5 text-fg-2">{m.error} Nothing was booked as a result.</div>
+                              <div className="mt-0.5 text-fg-2">
+                                {m.error} {errorOutcome(m)}
+                              </div>
                             </div>
                             {mi === messages.length - 1 && (
                               <motion.button
