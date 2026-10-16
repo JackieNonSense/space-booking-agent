@@ -83,12 +83,9 @@ export function StepRow({ part }: { part: ToolPart }) {
         </span>
         {step.detail && <span className="num min-w-0 truncate text-fg-3">{step.detail}</span>}
         {done && (
-          <>
-            <span className="num ml-auto shrink-0 pl-2 text-xs text-fg-3">{part.result!.ms > 0 ? `${part.result!.ms} ms` : ""}</span>
-            <ChevronDownIcon
-              className={`h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ${level > 0 ? "rotate-180" : ""}`}
-            />
-          </>
+          <ChevronDownIcon
+            className={`ml-auto h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ${level > 0 ? "rotate-180" : ""}`}
+          />
         )}
       </button>
 

@@ -142,12 +142,6 @@ export function focusSlot(parts: ToolPart[]): FocusSlot | null {
   return current;
 }
 
-export function bookedIds(parts: ToolPart[]): Set<string> {
-  return new Set(
-    parts.filter((p) => p.name === "confirm_booking" && p.result?.ok).map((p) => String(p.result!.data.id)),
-  );
-}
-
 export function quoteStates(parts: ToolPart[]): Map<string, QuoteState> {
   const quotes = parts.filter((p) => p.name === "create_booking_draft" && p.result?.ok);
   const confirmed = new Set(

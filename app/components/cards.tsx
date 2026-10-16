@@ -158,17 +158,20 @@ export function AvailabilityCard({
   data,
   onPick,
   onPickTime,
+  onPickSlot,
   disabled,
 }: {
   data: Data;
   onPick: (text: string) => void;
   onPickTime?: () => void;
+  /** Opens the picker on a free window: room "A" or "B" and its start, "HH:MM". */
+  onPickSlot?: (room: "A" | "B", start: string) => void;
   disabled: boolean;
 }) {
   const requested = data.requested as
     | { when: string; rooms: Array<{ room: string; roomName: string; available: boolean }> }
     | null;
-  const free = (data.freeWindows ?? {}) as Record<string, Array<{ label: string }>>;
+  const free = (data.freeWindows ?? {}) as Record<string, Array<{ start: string; label: string }>>;
   const alternatives = (data.alternatives ?? []) as Alternative[];
 
   return (
@@ -195,11 +198,24 @@ export function AvailabilityCard({
                   <span className="w-16 shrink-0 font-medium text-fg">{room}</span>
                   <span className="flex flex-wrap gap-1.5">
                     {windows.length ? (
-                      windows.map((w) => (
-                        <span key={w.label} className="num rounded-md bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok">
-                          {w.label}
-                        </span>
-                      ))
+                      windows.map((w) =>
+                        onPickSlot ? (
+                          <button
+                            key={w.label}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => onPickSlot(room.endsWith("B") ? "B" : "A", w.start)}
+                            aria-label={`Pick a time in ${room}, free ${w.label}`}
+                            className="num rounded-md border border-ok-border bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok transition-colors hover:border-ok disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {w.label}
+                          </button>
+                        ) : (
+                          <span key={w.label} className="num rounded-md bg-ok-soft px-2 py-0.5 text-xs font-medium text-ok">
+                            {w.label}
+                          </span>
+                        ),
+                      )
                     ) : (
                       <Badge tone="danger">Fully booked</Badge>
                     )}

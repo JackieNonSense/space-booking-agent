@@ -92,8 +92,10 @@ async function send(page, text) {
   await page.getByLabel("Message").fill(text);
   await page.getByLabel("Message").press("Enter");
 }
+/** A room card on the welcome screen. */
+const roomCard = (page, room) => page.getByRole("group", { name: new RegExp(`^Room ${room},`) });
 const openPicker = async (page) => {
-  await page.getByRole("button", { name: "Pick a time on the schedule" }).click();
+  await roomCard(page, "A").getByRole("button", { name: /^(Other times|Pick another day)$/ }).click();
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
   await dialog.getByRole("group", { name: /start times$/ }).first().waitFor();
@@ -106,7 +108,7 @@ try {
   // ---- composer ----------------------------------------------------------------
   await check("welcome screen loads cleanly", async (page) => {
     await page.goto(base, { waitUntil: "networkidle" });
-    await page.getByText("Book Room A or Room B in a couple of messages.").waitFor();
+    await page.getByText("What are you planning?").waitFor();
     assert(await page.getByRole("button", { name: "New chat" }).isDisabled(), "New chat is enabled with no chat");
   });
 
@@ -222,7 +224,7 @@ try {
     await send(page, "hi");
     await page.getByText("Hello there.").waitFor();
     await page.getByRole("button", { name: "New chat" }).click();
-    await page.getByText("Book Room A or Room B in a couple of messages.").waitFor();
+    await page.getByText("What are you planning?").waitFor();
     assert((await page.getByText("Hello there.").count()) === 0, "old reply still shown");
   });
 
@@ -359,7 +361,7 @@ try {
 
   await check("picker returns focus to the button that opened it", async (page) => {
     await page.goto(base, { waitUntil: "networkidle" });
-    const opener = page.getByRole("button", { name: "Pick a time on the schedule" });
+    const opener = roomCard(page, "A").getByRole("button", { name: /^(Other times|Pick another day)$/ });
     await opener.focus();
     await page.keyboard.press("Enter");
     const dialog = page.getByRole("dialog");
@@ -412,37 +414,75 @@ try {
     );
   });
 
-  await check("picker opened far ahead on the schedule shows the chosen day", async (page) => {
+  await check("room cards show live free times and open the picker on that slot", async (page) => {
     await page.goto(base, { waitUntil: "networkidle" });
-    for (let i = 0; i < 4; i++) await page.getByRole("button", { name: "Next week" }).click();
-    await page.waitForLoadState("networkidle");
-    await page.locator("aside").getByRole("button", { name: "Pick a time", exact: true }).click();
+    const day = await page.getByRole("group", { name: "Day" }).locator('[aria-pressed="true"]').innerText();
+    const card = roomCard(page, "B");
+    await card.getByText(/^Free |No free hour/).waitFor();
+    const start = card.getByRole("button", { name: /^Start Room B at / }).first();
+    const label = await start.innerText();
+    await start.click();
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
-    // The schedule's selected day, from the week strip: its heading animates, so
-    // for a moment the outgoing day's heading is still in the page.
-    const heading = await page
-      .getByRole("group", { name: "Choose a day" })
-      .locator('[aria-pressed="true"]')
-      .getAttribute("aria-label");
-    const selected = dialog.getByRole("group", { name: "Day" }).locator('[aria-pressed="true"]');
-    assert((await selected.count()) === 1, "no day chip is selected");
-    assert(await selected.isVisible(), "the selected day chip is not visible");
-    const day = heading.match(/\d{1,2}/)?.[0];
-    assert((await selected.innerText()).includes(day), `selected chip ${await selected.innerText()} vs schedule ${heading}`);
+    const pressed = async (group) =>
+      (await dialog.getByRole("group", { name: group }).locator('[aria-pressed="true"]').innerText()).replace(/\s+/g, " ");
+    assert((await pressed("Room")).startsWith("Room B"), "picker did not open on Room B");
+    assert((await pressed("Day")).includes(day.match(/\d+/)[0]), "picker did not open on the chosen day");
+    // "2pm" on the card, "2:00 pm" in the picker.
+    const chosen = await dialog.locator('[aria-label$="start times"] [aria-pressed="true"]').innerText();
+    assert(chosen.replace(/:00| /g, "") === label.replace(/:00| /g, ""), `start ${chosen} vs card ${label}`);
   });
 
-  await check("the last schedule week stops offering days past the booking window", async (page) => {
-    await page.goto(base, { waitUntil: "networkidle" });
-    const next = page.getByRole("button", { name: "Next week" });
-    while (!(await next.isDisabled())) await next.click();
-    await page.waitForTimeout(400);
-    await page.getByRole("group", { name: "Choose a day" }).getByRole("button").last().click();
-    await page.getByText("Not open for booking yet").waitFor();
-    assert(
-      (await page.locator("aside").getByRole("button", { name: "Pick a time", exact: true }).count()) === 0,
-      "Pick a time offered for a day that can't be booked",
+  await check("free times in the assistant's availability card open the picker there", async (page) => {
+    const date = new Date(Date.now() + 3 * 864e5).toLocaleDateString("en-CA", { timeZone: "Australia/Sydney" });
+    await fakeChat(
+      page,
+      ndjson([
+        { type: "conversation", id: "cv_fake0000000000" },
+        { type: "tool_call", id: "t1", name: "check_availability", input: { date } },
+        {
+          type: "tool_result",
+          id: "t1",
+          name: "check_availability",
+          ok: true,
+          ms: 9,
+          data: {
+            date,
+            dateLabel: "That day",
+            freeWindows: {
+              "Room A": [{ start: "08:00", end: "10:00", label: "8:00 am – 10:00 am" }],
+              "Room B": [{ start: "13:00", end: "18:00", label: "1:00 pm – 6:00 pm" }],
+            },
+            requested: null,
+            alternatives: [],
+          },
+        },
+        { type: "text", delta: "Room B is free from 1pm." },
+        { type: "done" },
+      ]),
     );
+    await page.goto(base, { waitUntil: "networkidle" });
+    await send(page, "A 3-hour workshop that day");
+    await page.getByRole("button", { name: /^Pick a time in Room B/ }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.waitFor();
+    const room = await dialog.getByRole("group", { name: "Room" }).locator('[aria-pressed="true"]').innerText();
+    const day = await dialog.getByRole("group", { name: "Day" }).locator('[aria-pressed="true"]').innerText();
+    assert(room.startsWith("Room B"), `opened on ${room}`);
+    assert(day.includes(String(Number(date.slice(8)))), `opened on day ${day}, expected ${date}`);
+  });
+
+  await check("booking details open from the summary strip", async (page) => {
+    await fakeChat(page, freeRoomReply("Room B is free then. What name and email should I use?"));
+    await page.goto(base, { waitUntil: "networkidle" });
+    await send(page, "Room B on Wednesday from 2pm to 6pm");
+    const strip = page.getByRole("button", { name: /^Booking details/ });
+    await strip.waitFor();
+    await strip.click();
+    const sheet = page.getByRole("dialog");
+    await sheet.getByText("Your booking").waitFor();
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden" });
   });
 
   await check(
@@ -469,8 +509,6 @@ try {
       const box = await dialog.boundingBox();
       assert(box && Math.abs(box.y + box.height - 844) < 2, `picker is not a bottom sheet (${JSON.stringify(box)})`);
       await page.keyboard.press("Escape");
-      await page.getByRole("button", { name: "Booking & schedule" }).click();
-      await noOverflow(page, "booking tab");
       await page.goto(`${base}/studio`, { waitUntil: "networkidle" });
       await page.getByText("Studio overview").waitFor();
       await page.waitForTimeout(800);
@@ -536,10 +574,11 @@ try {
       await noOverflow(page, "confirmed");
       await noClippedText(page, "confirmed");
       await page.screenshot({ path: join(outDir, "long-details-confirmed.png"), fullPage: true });
-      await page.getByRole("button", { name: "Booking & schedule" }).click();
+      await page.getByRole("button", { name: /^Booking details/ }).click();
+      await page.getByRole("dialog").getByText("Your booking").waitFor();
       await page.waitForTimeout(500);
       await noOverflow(page, "ticket");
-      await noClippedText(page, "ticket");
+      await noClippedText(page, "ticket", "dialog");
       await page.screenshot({ path: join(outDir, "long-details-ticket.png"), fullPage: true });
 
       // The same conversation in the studio's transcript, newest first.

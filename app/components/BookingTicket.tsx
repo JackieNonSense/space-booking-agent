@@ -1,9 +1,9 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { describeStep, type BookingProgress, type ToolPart } from "./derive";
-import { CalendarIcon, ClockIcon, DoorIcon, ExternalIcon, MailIcon, UserIcon } from "./icons";
+import { CalendarIcon, ChevronRightIcon, ClockIcon, DoorIcon, ExternalIcon, MailIcon, UserIcon, XIcon } from "./icons";
 import { EASE, pressable } from "./motion";
 import { StepIcon } from "./StepRow";
 
@@ -69,7 +69,8 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
 
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card" aria-labelledby="ticket-heading">
-      <div className="flex items-center justify-between gap-3 px-4 pt-4">
+      {/* relative: the outgoing status badge is popped out of layout against this box. */}
+      <div className="relative flex items-center justify-between gap-3 px-4 pt-4">
         <h2 id="ticket-heading" className="font-serif text-xl font-semibold text-fg">
           Your booking
         </h2>
@@ -292,6 +293,7 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
 }
 
 /** Slim version for the top of the mobile chat. */
+/** One line under the header once a booking is under way; opens the full details. */
 export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress; onOpen: () => void }) {
   const done = stepsDone(progress);
   if (progress.stage === "idle") return null;
@@ -301,22 +303,58 @@ export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress;
       onClick={onOpen}
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex w-full items-center gap-3 border-b border-line bg-surface px-4 py-2.5 text-left text-[13px] lg:hidden"
+      aria-label={`Booking details: ${STATUS[progress.stage]}`}
+      className="w-full border-b border-line bg-surface px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-hover sm:px-6"
     >
-      <span className="flex gap-1" aria-hidden>
-        {done.map((d, i) => (
-          <span
-            key={i}
-            className={`h-1.5 w-5 rounded-full transition-colors ${d ? (progress.stage === "booked" ? "bg-ok" : progress.stage === "cancelled" ? "bg-danger" : "bg-ink") : "bg-hover"}`}
-          />
-        ))}
+      <span className="mx-auto flex max-w-2xl items-center gap-3">
+        <span className="flex gap-1" aria-hidden>
+          {done.map((d, i) => (
+            <span
+              key={i}
+              className={`h-1.5 w-5 rounded-full transition-colors ${d ? (progress.stage === "booked" ? "bg-ok" : progress.stage === "cancelled" ? "bg-danger" : "bg-ink") : "bg-hover"}`}
+            />
+          ))}
+        </span>
+        <span className="num flex-1 truncate text-fg-2">
+          <span className="font-medium text-fg">{STATUS[progress.stage]}</span>
+          {progress.roomName ? ` · ${progress.roomName}` : ""}
+          {progress.dateLabel ? ` · ${progress.dateLabel}` : ""}
+          {progress.time ? ` · ${progress.time}` : ""}
+        </span>
+        {progress.total && <span className="num font-semibold text-fg">{progress.total}</span>}
+        <span className="hidden text-fg-3 sm:inline">Details</span>
+        <ChevronRightIcon className="h-4 w-4 shrink-0 text-fg-3" />
       </span>
-      <span className="num flex-1 truncate text-fg-2">
-        <span className="font-medium text-fg">{STATUS[progress.stage]}</span>
-        {progress.roomName ? ` · ${progress.roomName}` : ""}
-        {progress.dateLabel ? ` · ${progress.dateLabel}` : ""}
-      </span>
-      {progress.total && <span className="num font-semibold text-fg">{progress.total}</span>}
     </motion.button>
+  );
+}
+
+/** The booking card and its step-by-step activity, as a sheet over the chat. */
+export function BookingSheet({ progress, steps, onClose }: { progress: BookingProgress; steps: ToolPart[]; onClose: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    ref.current?.showModal();
+  }, []);
+  const close = () => ref.current?.close();
+  return (
+    <dialog
+      ref={ref}
+      onClose={onClose}
+      onClick={(e) => e.target === ref.current && close()}
+      aria-labelledby="ticket-heading"
+      className="m-0 mt-auto max-h-[92dvh] w-full max-w-none overflow-y-auto rounded-t-2xl bg-canvas p-3 text-fg shadow-card backdrop:bg-ink/45 sm:m-auto sm:max-w-md sm:rounded-2xl"
+    >
+      <div className="mb-2 flex justify-end">
+        <button
+          type="button"
+          onClick={close}
+          aria-label="Close"
+          className="grid h-8 w-8 place-items-center rounded-lg text-fg-2 transition-colors hover:bg-hover hover:text-fg"
+        >
+          <XIcon className="h-4 w-4" />
+        </button>
+      </div>
+      <BookingTicket progress={progress} steps={steps} />
+    </dialog>
   );
 }

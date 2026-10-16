@@ -91,13 +91,13 @@ export function SlotPicker({
     };
   }, [date]);
 
-  // Two weeks of day chips: from today, or around a later day picked on the
-  // schedule, never past the last bookable day.
+  // A week of day chips: from today, or around a later day the assistant
+  // suggested, never past the last bookable day.
   const lastDay = addDays(today, MAX_ADVANCE_DAYS);
   const [firstDay] = useState(() =>
-    date <= addDays(today, 13) ? today : [addDays(date, -3), addDays(lastDay, -13)].sort()[0],
+    date <= addDays(today, 6) ? today : [addDays(date, -3), addDays(lastDay, -6)].sort()[0],
   );
-  const days = useMemo(() => Array.from({ length: 14 }, (_, i) => addDays(firstDay, i)), [firstDay]);
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(firstDay, i)), [firstDay]);
   const dayRow = useRef<HTMLDivElement>(null);
   useEffect(() => {
     dayRow.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "center" });
@@ -183,7 +183,12 @@ export function SlotPicker({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* Day */}
-          <div ref={dayRow} role="group" aria-label="Day" className="-mx-5 flex gap-1.5 overflow-x-auto px-5 pb-1">
+          <div
+            ref={dayRow}
+            role="group"
+            aria-label="Day"
+            className="-mx-5 flex gap-1.5 overflow-x-auto px-5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
             {days.map((d) => {
               const selected = d === date;
               return (

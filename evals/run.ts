@@ -387,6 +387,20 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: "rough-time-gets-concrete-options",
+    // The first example on the welcome screen.
+    messages: ["A 3-hour workshop next Friday afternoon"],
+    async check({ turns, bookings }) {
+      const dates = calls(turns[0], "check_availability").map((c) => (c.input as { date: string }).date);
+      return [
+        ...expect(dates.includes("2026-10-16"), `checked ${JSON.stringify(dates)}; the coming Friday is 2026-10-16`),
+        ...expect(/\d{1,2}(:\d{2})?\s?(am|pm)/i.test(turns[0].reply), "did not offer a concrete time"),
+        ...expect(turns[0].reply.includes("300"), "did not give the price of 3 hours ($300)"),
+        ...expect((await bookings()).length === 0, "booked something"),
+      ];
+    },
+  },
+  {
     name: "details-form-sentence",
     // What the details form in the chat sends.
     messages: [
