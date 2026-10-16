@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:setup": "tsx scripts/db-setup.ts",
-    "eval": "tsx evals/run.ts"
+    "eval": "tsx evals/run.ts",
+    "email:test": "tsx scripts/email-test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
