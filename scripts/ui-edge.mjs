@@ -17,8 +17,10 @@ const results = [];
 
 /** Runs one named check in a fresh page; console errors fail it unless expected. */
 async function check(name, fn, { viewport = { width: 1440, height: 900 }, mobile = false, reducedMotion, expectErrors = [] } = {}) {
-  // ONLY=<text> runs just the checks whose name contains it.
+  // ONLY=<text> runs just the checks whose name contains it; SKIP=<text> leaves them out
+  // (e.g. SKIP="real booking" against production, so nothing is booked or emailed).
   if (process.env.ONLY && !name.includes(process.env.ONLY)) return;
+  if (process.env.SKIP && name.includes(process.env.SKIP)) return;
   const context = await browser.newContext({
     viewport,
     ...(mobile ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}),
@@ -296,11 +298,12 @@ try {
   await check("picker opened far ahead on the schedule shows the chosen day", async (page) => {
     await page.goto(base, { waitUntil: "networkidle" });
     for (let i = 0; i < 4; i++) await page.getByRole("button", { name: "Next week" }).click();
-    await page.waitForTimeout(400);
-    const heading = (await page.locator('section[aria-labelledby="schedule-heading"] h3').first().innerText()).trim();
+    await page.waitForLoadState("networkidle");
     await page.locator("aside").getByRole("button", { name: "Pick a time", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.waitFor();
+    // Read once the picker is open: before that a slow week fetch can still change it.
+    const heading = (await page.locator('section[aria-labelledby="schedule-heading"] h3').first().innerText()).trim();
     const selected = dialog.getByRole("group", { name: "Day" }).locator('[aria-pressed="true"]');
     assert((await selected.count()) === 1, "no day chip is selected");
     assert(await selected.isVisible(), "the selected day chip is not visible");
