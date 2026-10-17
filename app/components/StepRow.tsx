@@ -4,12 +4,35 @@ import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { describeStep, type StepTone, type ToolPart } from "./derive";
 import { CheckIcon, ChevronDownIcon, ShieldIcon, XIcon } from "./icons";
-import { EASE } from "./motion";
+import { EASE, spring } from "./motion";
 
 // One line per tool call, in plain language. Click once for the inputs and a
 // readable result, again for the raw JSON: summary → detail → raw.
 
+/**
+ * The step's status mark. Going from running to done is one object changing,
+ * not a swap: the spinner shrinks and blurs away as the check grows in.
+ */
 export function StepIcon({ tone }: { tone: StepTone }) {
+  return (
+    <span className="relative grid h-4 w-4 shrink-0 place-items-center" aria-hidden>
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.span
+          key={tone}
+          className="grid place-items-center"
+          initial={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+          exit={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+          transition={spring.smooth}
+        >
+          <StepGlyph tone={tone} />
+        </motion.span>
+      </AnimatePresence>
+    </span>
+  );
+}
+
+function StepGlyph({ tone }: { tone: StepTone }) {
   if (tone === "running") {
     return (
       <span className="relative grid h-4 w-4 place-items-center" aria-hidden>
@@ -77,14 +100,36 @@ export function StepRow({ part }: { part: ToolPart }) {
         }`}
       >
         <StepIcon tone={step.tone} />
-        <span className={`shrink-0 font-medium ${step.tone === "running" ? "shimmer-text" : "text-fg"}`}>
-          {step.title}
-          {step.tone === "running" ? "…" : ""}
+        {/* "Checking…" becomes "Checked" in place: the old title blurs out as the new one comes in. */}
+        <span className="relative shrink-0">
+          <AnimatePresence mode="popLayout" initial={false}>
+            <motion.span
+              key={step.title}
+              className={`block font-medium ${step.tone === "running" ? "shimmer-text" : "text-fg"}`}
+              initial={{ opacity: 0, filter: "blur(2px)" }}
+              animate={{ opacity: 1, filter: "blur(0px)" }}
+              exit={{ opacity: 0, filter: "blur(2px)", transition: { duration: 0.12 } }}
+              transition={{ duration: 0.2, ease: EASE }}
+            >
+              {step.title}
+              {step.tone === "running" ? "…" : ""}
+            </motion.span>
+          </AnimatePresence>
         </span>
-        {step.detail && <span className="num min-w-0 truncate text-fg-3">{step.detail}</span>}
+        {step.detail && (
+          <motion.span
+            key={step.detail}
+            className="num min-w-0 truncate text-fg-3"
+            initial={{ opacity: 0, x: -4 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.22, delay: 0.08, ease: EASE }}
+          >
+            {step.detail}
+          </motion.span>
+        )}
         {done && (
           <ChevronDownIcon
-            className={`ml-auto h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform ${level > 0 ? "rotate-180" : ""}`}
+            className={`ml-auto h-3.5 w-3.5 shrink-0 text-fg-3 transition-transform duration-300 ease-out ${level > 0 ? "rotate-180" : ""}`}
           />
         )}
       </button>
@@ -94,8 +139,8 @@ export function StepRow({ part }: { part: ToolPart }) {
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22, ease: EASE }}
+            exit={{ height: 0, opacity: 0, transition: { height: spring.smooth, opacity: { duration: 0.12 } } }}
+            transition={{ height: spring.smooth, opacity: { duration: 0.2, delay: 0.04 } }}
             className="overflow-hidden"
           >
             <div className="ml-6 mt-1 space-y-3 rounded-lg border border-line bg-inset p-3 text-xs">
@@ -122,11 +167,21 @@ export function StepRow({ part }: { part: ToolPart }) {
               >
                 {level === 2 ? "Hide raw JSON" : "Show raw JSON"}
               </button>
-              {level === 2 && (
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface p-2 font-mono text-[12px] leading-relaxed text-fg">
-                  {JSON.stringify({ input: part.input, result: part.result.data }, null, 2)}
-                </pre>
-              )}
+              <AnimatePresence initial={false}>
+                {level === 2 && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ height: spring.smooth, opacity: { duration: 0.15 } }}
+                    className="overflow-hidden"
+                  >
+                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface p-2 font-mono text-[12px] leading-relaxed text-fg">
+                      {JSON.stringify({ input: part.input, result: part.result.data }, null, 2)}
+                    </pre>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </motion.div>
         )}

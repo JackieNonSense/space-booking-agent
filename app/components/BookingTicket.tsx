@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { describeStep, type BookingProgress, type ToolPart } from "./derive";
 import { CalendarIcon, ChevronRightIcon, ClockIcon, DoorIcon, ExternalIcon, MailIcon, UserIcon } from "./icons";
-import { EASE, pressable } from "./motion";
+import { EASE, EASE_MOVE, enter, pressable, spring } from "./motion";
+import { Money } from "./Money";
 import { StepIcon } from "./StepRow";
 
 const STEPS = ["Date & time", "Room", "Details", "Confirmed"] as const;
@@ -68,7 +69,14 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
   const cancelled = progress.stage === "cancelled";
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card" aria-labelledby="ticket-heading">
+    <motion.section
+      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-card"
+      aria-labelledby="ticket-heading"
+      // The ticket gives a little as the stamp lands.
+      initial={false}
+      animate={booked ? { scale: [1, 0.992, 1] } : { scale: 1 }}
+      transition={{ duration: 0.18, delay: 0.62, ease: EASE }}
+    >
       {/* relative: the outgoing status badge is popped out of layout against this box. */}
       <div className="relative flex items-center justify-between gap-3 px-4 pt-4">
         <h2 id="ticket-heading" className="font-serif text-xl font-semibold text-fg">
@@ -77,10 +85,10 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.span
             key={progress.stage}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.9 }}
-            transition={{ duration: 0.2 }}
+            initial={{ opacity: 0, scale: 0.96, filter: "blur(2px)" }}
+            animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+            exit={{ opacity: 0, scale: 0.96, filter: "blur(2px)", transition: { duration: 0.12 } }}
+            transition={{ ...spring.snap, delay: booked ? 0.25 : 0 }}
             className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
               booked
                 ? "bg-ok-soft text-ok"
@@ -102,10 +110,10 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
           <li key={label}>
             <div className="h-1 overflow-hidden rounded-full bg-hover">
               <motion.div
-                className={`h-full rounded-full ${booked ? "bg-ok" : cancelled ? "bg-danger" : "bg-ink"}`}
+                className={`h-full w-full rounded-full transition-colors duration-300 ${booked ? "bg-ok" : cancelled ? "bg-danger" : "bg-ink"}`}
                 initial={false}
-                animate={{ width: done[i] ? "100%" : "0%" }}
-                transition={{ duration: 0.45, ease: EASE }}
+                animate={{ x: done[i] ? "0%" : "-100%" }}
+                transition={{ duration: 0.4, ease: EASE_MOVE, delay: booked && i === STEPS.length - 1 ? 0.25 : 0 }}
               />
             </div>
             <div
@@ -127,7 +135,7 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
         <Field icon={<MailIcon className="h-4 w-4" />} label="Email" value={progress.customerEmail} />
       </div>
 
-      <div className="mx-4 mb-4 mt-2 flex items-end justify-between gap-3 rounded-xl bg-inset px-3.5 py-3">
+      <div className="relative mx-4 mb-4 mt-2 flex items-end justify-between gap-3 rounded-xl bg-inset px-3.5 py-3">
         <div className="shrink-0">
           <div className="text-sm font-semibold text-fg">Total</div>
           <AnimatePresence>
@@ -136,6 +144,7 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
                 initial={{ opacity: 0, x: -4 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0 }}
+                transition={enter}
                 className="mt-0.5 text-xs font-medium text-ok"
               >
                 15% off for 4+ hours
@@ -148,38 +157,40 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
             <motion.span
               key={cancelled ? "stamp-cancelled" : "stamp-booked"}
               aria-hidden
-              className={`mb-1 rounded-md border-2 px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.18em] ${
+              className={`stamp-ink mb-1 rounded-md border-2 px-2 py-0.5 font-mono text-xs font-bold uppercase tracking-[0.18em] ${
                 cancelled ? "border-danger text-danger" : "border-brand text-brand"
               }`}
-              initial={{ opacity: 0, scale: 1.5, rotate: -16 }}
+              // Pressed down onto the paper: the one place in the app that is allowed to bounce.
+              initial={{ opacity: 0, scale: 1.4, rotate: -14 }}
               animate={{ opacity: 1, scale: 1, rotate: -8 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.35, delay: 0.25, ease: EASE }}
+              exit={{ opacity: 0, transition: { duration: 0.15 } }}
+              transition={{ default: { ...spring.impact, delay: 0.45 }, opacity: { duration: 0.12, delay: 0.45 } }}
             >
               {cancelled ? "Cancelled" : "Booked"}
             </motion.span>
           )}
         </AnimatePresence>
-        <span className="font-serif text-[28px] font-semibold leading-none tracking-tight">
-          <Value value={progress.total} placeholder="$—" />
-        </span>
+        <Money value={progress.total ?? "$—"} className="num font-serif text-[28px] font-semibold leading-none tracking-tight text-fg" />
       </div>
 
       <AnimatePresence>
         {(progress.replacesRef || progress.cancelPending) && !cancelled && (
-          <motion.p
+          <motion.div
             key="pending-change"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden border-t border-line bg-brand-soft px-4 py-2.5 text-[13px] text-brand-strong"
+            transition={{ height: spring.smooth, opacity: { duration: 0.2 } }}
+            className="overflow-hidden border-t border-line bg-brand-soft"
           >
-            {progress.cancelPending
-              ? `Cancelling ${progress.refCode}: waiting for your confirmation`
-              : booked
-                ? `Moved from ${progress.replacesRef}, which is now cancelled`
-                : `Moving ${progress.replacesRef} to this new time`}
-          </motion.p>
+            <p className="px-4 py-2.5 text-[13px] text-brand-strong">
+              {progress.cancelPending
+                ? `Cancelling ${progress.refCode}: waiting for your confirmation`
+                : booked
+                  ? `Moved from ${progress.replacesRef}, which is now cancelled`
+                  : `Moving ${progress.replacesRef} to this new time`}
+            </p>
+          </motion.div>
         )}
         {cancelled && (
           <motion.div
@@ -187,9 +198,10 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.35, ease: EASE }}
-            className="border-t border-danger-border bg-danger-soft px-4 py-3"
+            transition={{ height: { ...spring.smooth, delay: 0.5 }, opacity: { duration: 0.2, delay: 0.5 } }}
+            className="overflow-hidden border-t border-danger-border bg-danger-soft"
           >
+            <div className="px-4 py-3">
             <div className="text-sm font-semibold text-danger">
               Reference <span className="font-mono line-through">{progress.refCode}</span> cancelled
             </div>
@@ -202,6 +214,7 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
                     ? "Notice ready (example address, not sent)"
                     : "This time has been released"}
             </div>
+            </div>
           </motion.div>
         )}
         {booked && (
@@ -210,8 +223,9 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.35, ease: EASE }}
-            className="border-t border-ok-border bg-ok-soft"
+            // The reference opens once the stamp has landed.
+            transition={{ height: { ...spring.smooth, delay: 0.7 }, opacity: { duration: 0.2, delay: 0.7 } }}
+            className="overflow-hidden border-t border-ok-border bg-ok-soft"
           >
             <div className="flex items-center justify-between gap-3 px-4 py-3">
               <div className="min-w-0">
@@ -288,11 +302,10 @@ export function BookingTicket({ progress, steps }: { progress: BookingProgress; 
           </ol>
         )}
       </div>
-    </section>
+    </motion.section>
   );
 }
 
-/** Slim version for the top of the mobile chat. */
 /** On phones, one line under the tabs once a booking is under way; opens the booking tab. */
 export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress; onOpen: () => void }) {
   const done = stepsDone(progress);
@@ -303,6 +316,7 @@ export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress;
       onClick={onOpen}
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
+      transition={enter}
       aria-label={`Booking details: ${STATUS[progress.stage]}`}
       className="w-full border-b border-line bg-surface px-4 py-2.5 text-left text-[13px] transition-colors hover:bg-hover sm:px-6 lg:hidden"
     >
@@ -321,7 +335,7 @@ export function ProgressStrip({ progress, onOpen }: { progress: BookingProgress;
           {progress.dateLabel ? ` · ${progress.dateLabel}` : ""}
           {progress.time ? ` · ${progress.time}` : ""}
         </span>
-        {progress.total && <span className="num font-semibold text-fg">{progress.total}</span>}
+        {progress.total && <Money value={progress.total} className="num font-semibold text-fg" />}
         <span className="hidden text-fg-3 sm:inline">Details</span>
         <ChevronRightIcon className="h-4 w-4 shrink-0 text-fg-3" />
       </span>

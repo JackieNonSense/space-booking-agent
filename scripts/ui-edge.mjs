@@ -218,6 +218,28 @@ try {
     await page.getByRole("alert").getByText(/Something went wrong/).waitFor();
   });
 
+  await check("the conversation follows a long reply to the end", async (page) => {
+    const long = Array.from({ length: 14 }, (_, i) => `Paragraph ${i + 1}: Room A and Room B details for the reader.`).join("\n\n");
+    await fakeChat(
+      page,
+      ndjson([
+        { type: "conversation", id: "cv_fake0000000000" },
+        ...long.match(/[\s\S]{1,40}/g).map((delta) => ({ type: "text", delta })),
+        { type: "done" },
+      ]),
+      { delayMs: 300 },
+    );
+    await page.goto(base, { waitUntil: "networkidle" });
+    await send(page, "Tell me everything");
+    await page.getByText("Paragraph 14:").waitFor();
+    await page.waitForTimeout(900);
+    const gap = await page.evaluate(() => {
+      const el = document.querySelector('[role="log"]').parentElement;
+      return Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
+    });
+    assert(gap <= 8, `${gap}px of the reply is below the fold`);
+  });
+
   await check("New chat clears the conversation", async (page) => {
     await fakeChat(page, fakeReply("Hello there."));
     await page.goto(base, { waitUntil: "networkidle" });

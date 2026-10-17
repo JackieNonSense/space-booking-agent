@@ -26,7 +26,7 @@ try {
   await page.goto(base, { waitUntil: "networkidle" });
 
   // 1. Slot picker
-  await page.getByRole("button", { name: "Pick a time on the schedule" }).click();
+  await page.getByRole("group", { name: /^Room A,/ }).getByRole("button", { name: /^(Other times|Pick another day)$/ }).click();
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
   await dialog.getByRole("group", { name: "Day" }).getByRole("button").nth(4).click();
@@ -96,7 +96,7 @@ try {
   // 7. Mobile picker
   const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   await mobile.goto(base, { waitUntil: "networkidle" });
-  await mobile.getByRole("button", { name: "Pick a time on the schedule" }).click();
+  await mobile.getByRole("group", { name: /^Room A,/ }).getByRole("button", { name: /^(Other times|Pick another day)$/ }).click();
   await mobile.getByRole("dialog").waitFor();
   await mobile.getByRole("dialog").getByRole("group", { name: "Afternoon start times" }).getByRole("button").first().click();
   await mobile.getByRole("dialog").getByRole("button", { name: /^4 h/ }).click();

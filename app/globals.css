@@ -45,7 +45,17 @@
   --booked: #4a443d;
   --on-booked: #ffffff;
 
-  --shadow-card: 0 1px 2px rgb(26 23 20 / 0.06), 0 4px 16px -8px rgb(26 23 20 / 0.12);
+  /* Three layers, tinted toward the warm canvas: a hairline, a contact shadow and a soft lift. */
+  --shadow-card: 0 0 0 1px rgb(26 23 20 / 0.05), 0 1px 2px -1px rgb(26 23 20 / 0.08), 0 6px 16px -8px rgb(60 40 15 / 0.14);
+}
+
+/* Easing shared with motion.ts, so CSS hovers and motion animations feel the same. */
+@theme {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-move: cubic-bezier(0.2, 0, 0, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @theme inline {
@@ -94,7 +104,30 @@ body {
 
 /* Times and prices line up in columns. */
 .num {
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* The serif is variable: large headings get its display optical size, which is finer than the text cut. */
+.font-serif {
+  font-optical-sizing: auto;
+}
+h1, h2, h3 {
+  text-wrap: balance;
+}
+p {
+  text-wrap: pretty;
+}
+
+/* The conversation fades out under the header instead of being cut by a hard line. */
+.scroll-fade {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+}
+
+/* The BOOKED stamp: ink pressed into paper, with a few gaps where it didn't take. */
+.stamp-ink {
+  mix-blend-mode: multiply;
+  -webkit-mask: url(/ink-mask.svg) center / 160px;
+  mask: url(/ink-mask.svg) center / 160px;
 }
 
 /* In the base layer so a component can still opt out with a utility class. */
@@ -123,20 +156,21 @@ body {
 }
 .shimmer-text {
   color: var(--fg-2);
-  background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 40%, var(--brand) 50%, var(--fg-2) 60%, var(--fg-2) 100%);
+  background: linear-gradient(90deg, var(--fg-2) 0%, var(--fg-2) 45%, var(--brand) 50%, var(--fg-2) 55%, var(--fg-2) 100%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: shimmer 1.6s linear infinite;
+  animation: shimmer 2s linear infinite;
 }
 
+/* A soft pulse rather than a terminal-style blink. */
 @keyframes caret {
-  0%, 50% { opacity: 1; }
-  50.01%, 100% { opacity: 0; }
+  from { opacity: 1; }
+  to { opacity: 0.25; }
 }
 .caret {
-  animation: caret 1s step-end infinite;
+  animation: caret 0.8s ease-in-out infinite alternate;
 }
 
 /* Past time on today's schedule. */
@@ -148,4 +182,6 @@ body {
   .typing-dot { animation: none; opacity: 0.6; }
   .shimmer-text { animation: none; -webkit-text-fill-color: currentColor; background: none; }
   .caret { animation: none; }
+  .animate-pulse { animation: none; }
+  html { scroll-behavior: auto; }
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { motion } from "motion/react";
-import { useId, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { isValidEmail, isValidName, normaliseEmail, normaliseName, suggestEmail } from "@/lib/contact";
 import {
   AlertIcon,
@@ -12,9 +12,9 @@ import {
   MailIcon,
   TagIcon,
   UserIcon,
-  XIcon,
 } from "./icons";
-import { EASE, fadeUp, popIn, pressable, stagger } from "./motion";
+import { EASE, fadeUp, pressable, spring, stagger } from "./motion";
+import { Money } from "./Money";
 import type { Alternative } from "./types";
 
 // Inline cards follow one rule set: a title row, the content, and at most one
@@ -43,16 +43,29 @@ const sydneyTime = (iso: string) =>
 // ---------------------------------------------------------------------------
 // Building blocks
 
+/**
+ * Every result card grows out of the step that produced it: the space opens
+ * smoothly while the card settles from just above, instead of popping in and
+ * shoving the conversation down. The outer padding keeps the shadow unclipped.
+ */
 function Card({ children, tone = "default", dimmed = false }: { children: ReactNode; tone?: "default" | "ok" | "danger"; dimmed?: boolean }) {
   const border = tone === "ok" ? "border-ok-border" : tone === "danger" ? "border-danger-border" : "border-line";
   return (
     <motion.div
-      variants={popIn}
-      initial="hidden"
-      animate="show"
-      className={`overflow-hidden rounded-xl border ${border} bg-surface shadow-card transition-opacity duration-300 ${dimmed ? "opacity-60" : ""}`}
+      className="-mx-2 -mb-2 overflow-hidden px-2 pb-2"
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: "auto", opacity: 1 }}
+      transition={{ height: spring.smooth, opacity: { duration: 0.2, delay: 0.06 } }}
     >
-      {children}
+      <motion.div
+        initial={{ y: -6 }}
+        // Opacity lives here, not in a class: an inline style from the entrance would override the class.
+        animate={{ y: 0, opacity: dimmed ? 0.6 : 1 }}
+        transition={{ y: spring.smooth, opacity: { duration: 0.3, ease: EASE } }}
+        className={`overflow-hidden rounded-xl border ${border} bg-surface shadow-card transition-colors duration-300`}
+      >
+        {children}
+      </motion.div>
     </motion.div>
   );
 }
@@ -77,20 +90,6 @@ function Badge({ tone, children }: { tone: "ok" | "danger" | "brand" | "neutral"
     neutral: "bg-hover text-fg-2",
   }[tone];
   return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${style}`}>{children}</span>;
-}
-
-function PrimaryButton({ children, onClick, disabled }: { children: ReactNode; onClick: () => void; disabled?: boolean }) {
-  return (
-    <motion.button
-      type="button"
-      {...pressable}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3.5 py-2 text-sm font-semibold text-on-ink transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:opacity-40"
-    >
-      {children}
-    </motion.button>
-  );
 }
 
 function SecondaryButton({ children, onClick, disabled }: { children: ReactNode; onClick: () => void; disabled?: boolean }) {
@@ -257,7 +256,7 @@ export function PriceCard({ data }: { data: Data }) {
       <Title icon={<TagIcon className="h-4 w-4" />}>Price</Title>
       <div className="flex items-end justify-between gap-4 px-4 pb-4 pt-1.5">
         <p className="num text-[13px] leading-relaxed text-fg-2">{str(data.breakdown)}</p>
-        <span className="num font-serif text-[28px] font-semibold leading-none text-fg">{str(data.total)}</span>
+        <Money value={str(data.total)} className="num font-serif text-[28px] font-semibold leading-none tracking-tight text-fg" />
       </div>
     </Card>
   );
@@ -461,7 +460,17 @@ export function QuoteCard({
           <dl className="num mb-2 space-y-1 border-b border-line pb-2 text-[13px]">
             <div className="flex justify-between text-fg-2">
               <dt>Subtotal</dt>
-              <dd>{str(data.subtotal)}</dd>
+              <dd className="relative">
+                {str(data.subtotal)}
+                {/* Struck through before the total rolls down to the discounted price. */}
+                <motion.span
+                  aria-hidden
+                  className="absolute inset-x-0 top-1/2 h-px origin-left bg-fg-3"
+                  initial={{ scaleX: 0 }}
+                  animate={{ scaleX: 1 }}
+                  transition={{ duration: 0.25, delay: 0.15, ease: EASE }}
+                />
+              </dd>
             </div>
             <div className="flex justify-between font-medium text-ok">
               <dt>4+ hour discount (15%)</dt>
@@ -471,14 +480,12 @@ export function QuoteCard({
         )}
         <div className="flex items-baseline justify-between">
           <span className="text-sm font-semibold text-fg">Total</span>
-          <motion.span
+          <QuoteTotal
+            subtotal={str(data.subtotal)}
+            total={str(data.total)}
+            discounted={discounted}
             className="num font-serif text-[28px] font-semibold leading-none tracking-tight text-fg"
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.2, ease: EASE }}
-          >
-            {str(data.total)}
-          </motion.span>
+          />
         </div>
         <p className="num mt-1.5 text-xs text-fg-3">{str(data.breakdown)}</p>
         {replaces && (
@@ -489,53 +496,168 @@ export function QuoteCard({
         )}
       </div>
 
-      {state === "active" ? (
-        <div className="px-4 pb-4 pt-3.5">
-          <p className="text-[13px] text-fg-2">
-            {replaces
-              ? `Check the email address above. Confirming moves ${replaces.refCode} to this time: it will be cancelled, and the new reference is emailed there.`
-              : `Check the email address above. Confirming books ${str(data.roomName)} and sends the confirmation there.`}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <PrimaryButton onClick={onConfirm} disabled={disabled}>
-              <CheckIcon className="h-4 w-4" strokeWidth={2.25} />
-              {replaces ? "Confirm change" : "Confirm and book"}
-            </PrimaryButton>
-            <SecondaryButton onClick={onChange} disabled={disabled}>
-              Change
-            </SecondaryButton>
-          </div>
-        </div>
-      ) : (
-        <div className="h-4" />
-      )}
+      <QuoteActions
+        state={state}
+        disabled={disabled}
+        onConfirm={onConfirm}
+        onChange={onChange}
+        label={replaces ? "Confirm change" : "Confirm and book"}
+        doneLabel={replaces ? "Moved" : "Booked"}
+        note={
+          replaces
+            ? `Check the email address above. Confirming moves ${replaces.refCode} to this time: it will be cancelled, and the new reference is emailed there.`
+            : `Check the email address above. Confirming books ${str(data.roomName)} and sends the confirmation there.`
+        }
+      />
     </Card>
   );
 }
 
-/** A check mark that draws itself once. */
-function DrawnCheck() {
+/**
+ * The quote total. With the 4-hour discount it opens at the subtotal and rolls
+ * down to the discounted price just after the subtotal is struck through, so
+ * the discount is seen happening rather than only stated.
+ */
+function QuoteTotal({ subtotal, total, discounted, className }: { subtotal: string; total: string; discounted: boolean; className: string }) {
+  const reduce = useReducedMotion();
+  const [shown, setShown] = useState(discounted && !reduce ? subtotal : total);
+  useEffect(() => {
+    if (shown === total) return;
+    const t = setTimeout(() => setShown(total), 420);
+    return () => clearTimeout(t);
+  }, [shown, total]);
+  return <Money value={shown} className={className} />;
+}
+
+/**
+ * Confirm button that does three jobs, as in Stripe Checkout: it stays itself
+ * while the booking goes through (with a spinner only if that takes a moment),
+ * turns into "Booked" on success, then the row folds away.
+ */
+function QuoteActions({
+  state,
+  disabled,
+  onConfirm,
+  onChange,
+  label,
+  doneLabel,
+  note,
+}: {
+  state: QuoteState;
+  disabled: boolean;
+  onConfirm: () => void;
+  onChange: () => void;
+  label: string;
+  doneLabel: string;
+  note: string;
+}) {
+  const [clicked, setClicked] = useState(false);
+  // A turn that ended without booking puts the button back to normal.
+  const [wasDisabled, setWasDisabled] = useState(disabled);
+  if (wasDisabled !== disabled) {
+    setWasDisabled(disabled);
+    if (!disabled) setClicked(false);
+  }
+  // After a booking the row shows "Booked" for a moment, then folds away. A quote
+  // that was already booked or replaced when it appeared never shows the row.
+  const [visible, setVisible] = useState(state === "active");
+  useEffect(() => {
+    if (state === "active") return;
+    const t = setTimeout(() => setVisible(false), state === "booked" ? 900 : 0);
+    return () => clearTimeout(t);
+  }, [state]);
+
+  const phase = state === "booked" ? "done" : clicked && disabled ? "pending" : "idle";
   return (
-    <motion.svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" aria-hidden>
+    <AnimatePresence initial={false}>
+      {visible ? (
+        <motion.div
+          key="actions"
+          className="overflow-hidden"
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ height: spring.smooth, opacity: { duration: 0.15 } }}
+        >
+          <div className="px-4 pb-4 pt-3.5">
+            <p className="text-[13px] text-fg-2">{note}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <motion.button
+                type="button"
+                {...pressable}
+                onClick={() => {
+                  setClicked(true);
+                  onConfirm();
+                }}
+                disabled={disabled || phase === "done"}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-on-ink transition-[background-color,opacity] duration-200 disabled:cursor-not-allowed ${
+                  phase === "done" ? "bg-ok" : "bg-ink hover:bg-ink-hover"
+                } ${phase === "idle" ? "disabled:opacity-40" : ""}`}
+              >
+                <span className="relative grid h-4 w-4 place-items-center" aria-hidden>
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                      key={phase}
+                      className="grid place-items-center"
+                      initial={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+                      animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                      exit={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+                      transition={spring.smooth}
+                    >
+                      {phase === "pending" ? (
+                        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-on-ink/40 border-t-on-ink motion-reduce:animate-none" />
+                      ) : (
+                        <CheckIcon className="h-4 w-4" strokeWidth={2.25} />
+                      )}
+                    </motion.span>
+                  </AnimatePresence>
+                </span>
+                {phase === "done" ? doneLabel : label}
+              </motion.button>
+              {phase !== "done" && (
+                <SecondaryButton onClick={onChange} disabled={disabled}>
+                  Change
+                </SecondaryButton>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      ) : (
+        <div key="spacer" className="h-4" />
+      )}
+    </AnimatePresence>
+  );
+}
+
+/**
+ * A mark that draws itself once: the disc settles in with a slight give, then
+ * the stroke is drawn. A check for a booking, a cross for a cancellation.
+ */
+function DrawnMark({ kind }: { kind: "check" | "cross" }) {
+  const strokes = kind === "check" ? ["m7.5 12.5 3 3 6-6.5"] : ["m8.5 8.5 7 7", "m15.5 8.5-7 7"];
+  return (
+    <motion.svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" aria-hidden>
       <motion.circle
         cx="12"
         cy="12"
         r="11"
-        className="fill-ok"
+        className={kind === "check" ? "fill-ok" : "fill-danger"}
+        style={{ originX: "50%", originY: "50%" }}
         initial={{ scale: 0.6, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.3, ease: EASE }}
+        transition={{ scale: { ...spring.settle, delay: 0.08 }, opacity: { duration: 0.15, delay: 0.08 } }}
       />
-      <motion.path
-        d="m7.5 12.5 3 3 6-6.5"
-        stroke="white"
-        strokeWidth={2.4}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 0.35, delay: 0.2, ease: EASE }}
-      />
+      {strokes.map((d, i) => (
+        <motion.path
+          key={d}
+          d={d}
+          stroke="white"
+          strokeWidth={2.4}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 0.26, delay: 0.2 + i * 0.1, ease: EASE }}
+        />
+      ))}
     </motion.svg>
   );
 }
@@ -568,7 +690,7 @@ export function ConfirmedCard({ data }: { data: Data }) {
     <Card tone="ok">
       <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
         <div className="flex items-center gap-2.5">
-          <DrawnCheck />
+          <DrawnMark kind="check" />
           <span className="text-[15px] font-semibold text-fg">{replaced ? "Booking moved" : "Booking confirmed"}</span>
         </div>
         <CopyRef value={str(data.refCode)} />
@@ -717,9 +839,7 @@ export function CancelledCard({ data }: { data: Data }) {
     <Card>
       <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
         <div className="flex items-center gap-2.5">
-          <span className="grid h-6 w-6 place-items-center rounded-full bg-danger text-on-ink" aria-hidden>
-            <XIcon className="h-3.5 w-3.5" strokeWidth={2.5} />
-          </span>
+          <DrawnMark kind="cross" />
           <span className="text-[15px] font-semibold text-fg">Booking cancelled</span>
         </div>
         <span className="font-mono text-sm font-semibold text-fg-2 line-through">{str(data.refCode)}</span>

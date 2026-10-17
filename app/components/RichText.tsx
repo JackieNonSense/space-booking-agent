@@ -28,18 +28,21 @@ function inline(text: string): ReactNode[] {
   );
 }
 
-export function RichText({ text }: { text: string }) {
+/** `trailing` (e.g. a typing caret) goes right after the last word, inside the last line. */
+export function RichText({ text, trailing }: { text: string; trailing?: ReactNode }) {
   const blocks = text.trim().split(/\n{2,}/);
   return (
     <div className="space-y-2.5 leading-relaxed">
       {blocks.map((block, i) => {
         const lines = block.split("\n");
+        const end = i === blocks.length - 1 ? trailing : null;
         if (lines.every((l) => /^\s*([-*•]|\d+\.)\s+/.test(l))) {
           return (
             <ul key={i} className="space-y-1 pl-4">
               {lines.map((l, j) => (
                 <li key={j} className="list-disc marker:text-fg-3">
                   {inline(l.replace(/^\s*([-*•]|\d+\.)\s+/, ""))}
+                  {j === lines.length - 1 && end}
                 </li>
               ))}
             </ul>
@@ -53,6 +56,7 @@ export function RichText({ text }: { text: string }) {
                 {inline(l)}
               </Fragment>
             ))}
+            {end}
           </p>
         );
       })}

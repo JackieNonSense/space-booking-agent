@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MAX_ADVANCE_DAYS } from "@/lib/config";
 import { calculatePrice, cheaperLongerOption, formatMoney } from "@/lib/pricing";
 import { XIcon } from "./icons";
+import { Money } from "./Money";
 import { EASE, pressable } from "./motion";
 
 // Pick a room, a start and a length by tapping, with the price on every
@@ -344,7 +345,7 @@ export function SlotPicker({
                   {label(chosenStart + chosenDuration)}
                 </div>
                 <div className="num text-xs text-fg-2">
-                  {hours(chosenDuration)} · <span className="font-semibold text-fg">{formatMoney(quote!.totalCents)}</span>
+                  {hours(chosenDuration)} · <Money value={quote!.totalCents / 100} className="font-semibold text-fg" />
                   {quote!.discountApplied ? " with 15% off" : ""}
                 </div>
               </>

@@ -1,6 +1,6 @@
 "use client";
 
-import { AnimatePresence, MotionConfig, motion } from "motion/react";
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/agent/events";
@@ -29,7 +29,7 @@ import {
   type ToolPart,
 } from "./derive";
 import { AlertIcon, ArrowUpIcon, AssistantMark, CalendarIcon, ChevronRightIcon, PlusIcon, RetryIcon, TagIcon } from "./icons";
-import { EASE, fadeUp, pressable, stagger } from "./motion";
+import { EASE, defaultTransition, enter, fade, fadeUp, pressable, spring, stagger } from "./motion";
 import { RichText } from "./RichText";
 import { RoomsAtAGlance } from "./RoomsAtAGlance";
 import { Schedule } from "./Schedule";
@@ -84,7 +84,6 @@ export function BookingApp() {
   const [week, setWeek] = useState(0);
   const [picker, setPicker] = useState<PickerRequest | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   // ---- schedule -----------------------------------------------------------
   // The side panel can page through weeks; the room cards on the welcome
@@ -128,11 +127,57 @@ export function BookingApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the focus date changes
   }, [focus?.date]);
 
+  // ---- scrolling ------------------------------------------------------------
+  // Follow the conversation while the reader is at the bottom: whenever the
+  // content grows (streamed words, cards opening) jump straight to the end,
+  // at most once a frame. Scrolling up stops the following; sending a message
+  // brings the reader back with one smooth scroll. Scrolling smoothly on every
+  // streamed chunk made the scrolls fight each other.
+  const reduceMotion = useReducedMotion();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  const pinned = useRef(true);
+  const smoothUntil = useRef(0);
+  const hasMessages = messages.length > 0;
+  const hasMessagesRef = useRef(hasMessages);
   useEffect(() => {
-    // The welcome screen starts at the top; only follow the conversation once it exists.
-    if (messages.length === 0) return;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, busy]);
+    hasMessagesRef.current = hasMessages;
+  }, [hasMessages]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    const content = logRef.current;
+    if (!el || !content) return;
+    const follow = new ResizeObserver(() => {
+      // The welcome screen starts at the top; only follow a conversation.
+      if (!hasMessagesRef.current || !pinned.current || Date.now() < smoothUntil.current) return;
+      el.scrollTop = el.scrollHeight;
+    });
+    follow.observe(content);
+    return () => follow.disconnect();
+  }, []);
+
+  const userTurns = messages.filter((m) => m.role === "user").length;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!userTurns || !el) return;
+    pinned.current = true;
+    smoothUntil.current = Date.now() + 600;
+    el.scrollTo({ top: el.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
+  }, [userTurns, reduceMotion]);
+
+  // Only a move upward means the reader is looking back. A long smooth scroll
+  // passes through positions far from the bottom on its way down, and those
+  // must not switch the following off.
+  const lastTop = useRef(0);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (el.scrollTop < lastTop.current - 1) pinned.current = distance < 80;
+    else if (distance < 80) pinned.current = true;
+    lastTop.current = el.scrollTop;
+  };
 
   // Grow the composer with its content.
   useEffect(() => {
@@ -344,7 +389,7 @@ export function BookingApp() {
     );
 
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion="user" transition={defaultTransition}>
       <div className="flex h-dvh flex-col">
         <header className="relative z-10 border-b border-line bg-surface px-4 py-2.5 sm:px-6">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
@@ -407,8 +452,8 @@ export function BookingApp() {
         <main className="mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)] gap-6 px-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_392px]">
           {/* Chat */}
           <section className={`min-h-0 flex-col ${tab === "chat" ? "flex" : "hidden"} lg:flex`} aria-label="Chat">
-            <div className="flex-1 overflow-y-auto py-6">
-              <div className="mx-auto max-w-2xl space-y-6" role="log" aria-live="polite" aria-label="Conversation">
+            <div ref={scrollRef} onScroll={onScroll} className="scroll-fade flex-1 overflow-y-auto py-6">
+              <div ref={logRef} className="mx-auto max-w-2xl space-y-6" role="log" aria-live="polite" aria-label="Conversation">
                 <AnimatePresence initial={false}>
                   {messages.length === 0 && (
                     <motion.div
@@ -463,9 +508,11 @@ export function BookingApp() {
                   m.role === "user" ? (
                     <motion.div
                       key={m.id}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.28, ease: EASE }}
+                      // Rises from the composer it was typed in.
+                      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ y: spring.smooth, scale: spring.smooth, opacity: { duration: 0.2, ease: EASE } }}
+                      style={{ originX: 1, originY: 1 }}
                       className="flex justify-end"
                     >
                       <div
@@ -483,10 +530,14 @@ export function BookingApp() {
                           p.kind === "text" ? (
                             p.text.trim() && (
                               <motion.div key={pi} lang={langOf(p.text)} variants={fadeUp} initial="hidden" animate="show" className="text-[15px] leading-7 text-fg [overflow-wrap:anywhere]">
-                                <RichText text={p.text} />
-                                {busy && mi === messages.length - 1 && pi === m.parts.length - 1 && (
-                                  <span className="caret ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 bg-fg" aria-hidden />
-                                )}
+                                <RichText
+                                  text={p.text}
+                                  trailing={
+                                    busy && mi === messages.length - 1 && pi === m.parts.length - 1 ? (
+                                      <span className="caret ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 rounded-full bg-fg" aria-hidden />
+                                    ) : null
+                                  }
+                                />
                               </motion.div>
                             )
                           ) : (
@@ -531,12 +582,12 @@ export function BookingApp() {
                           />
                         )}
                         {mi === messages.length - 1 && replies.length > 0 && (
-                          <motion.div className="flex flex-wrap gap-2 pt-1" variants={stagger(0.05, 0.15)} initial="hidden" animate="show">
+                          <motion.div className="flex flex-wrap gap-2 pt-1" variants={stagger(0.03, 0.1)} initial="hidden" animate="show">
                             {replies.map((r) => (
                               <motion.button
                                 key={r}
                                 type="button"
-                                variants={fadeUp}
+                                variants={fade}
                                 {...pressable}
                                 onClick={() => {
                                   // Replies that need details start a sentence for the customer to finish.
@@ -569,7 +620,8 @@ export function BookingApp() {
                       key="typing"
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
+                      exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                      transition={enter}
                       className="flex items-center gap-3"
                       aria-label="Assistant is typing"
                     >
@@ -582,7 +634,6 @@ export function BookingApp() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-                <div ref={bottomRef} />
               </div>
             </div>
 
@@ -593,7 +644,7 @@ export function BookingApp() {
                 void send(input);
               }}
             >
-              <div className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border border-control bg-surface p-2 shadow-card transition-shadow focus-within:border-ink focus-within:shadow-[0_0_0_3px_rgb(26_23_20/0.08)]">
+              <div className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border border-control bg-surface p-2 shadow-card transition-[border-color,box-shadow] focus-within:border-ink focus-within:shadow-[0_0_0_3px_rgb(26_23_20/0.08)]">
                 <textarea
                   ref={inputRef}
                   value={input}
@@ -615,9 +666,26 @@ export function BookingApp() {
                   {...pressable}
                   disabled={busy || !input.trim()}
                   aria-label="Send"
-                  className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-ink text-on-ink transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:bg-hover disabled:text-fg-3"
+                  // Concentric with the composer: 16px outer radius minus 8px padding.
+                  className="relative grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink text-on-ink transition-colors hover:bg-ink-hover disabled:cursor-not-allowed disabled:bg-hover disabled:text-fg-3"
                 >
-                  <ArrowUpIcon className="h-5 w-5" />
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                      key={busy ? "busy" : "idle"}
+                      className="grid place-items-center"
+                      initial={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+                      animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                      exit={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+                      transition={spring.smooth}
+                      aria-hidden
+                    >
+                      {busy ? (
+                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-fg-3/30 border-t-fg-3 motion-reduce:animate-none" />
+                      ) : (
+                        <ArrowUpIcon className="h-5 w-5" />
+                      )}
+                    </motion.span>
+                  </AnimatePresence>
                 </motion.button>
               </div>
               <p className="mx-auto mt-2 max-w-2xl px-1 text-xs leading-relaxed text-fg-3">

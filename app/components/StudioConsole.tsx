@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ToolPart } from "./derive";
 import { AssistantMark, RetryIcon, XIcon } from "./icons";
-import { EASE, fadeUp, pressable, stagger } from "./motion";
+import { EASE, defaultTransition, fadeUp, pressable, stagger } from "./motion";
 import { RichText } from "./RichText";
 import { StepRow } from "./StepRow";
 
@@ -127,7 +127,7 @@ export function StudioConsole() {
   const funnelMax = Math.max(1, ...(data?.funnel.map((f) => f.value) ?? [1]));
 
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion="user" transition={defaultTransition}>
       <div className="min-h-dvh bg-canvas">
         <header className="sticky top-0 z-10 border-b border-line bg-surface px-4 py-2.5 sm:px-6">
           <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">

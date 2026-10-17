@@ -12,10 +12,12 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Variable, with the optical-size axis: large headings and prices use the
+// finer display cut instead of the text cut.
 const serif = Source_Serif_4({
   variable: "--font-serif",
   subsets: ["latin"],
-  weight: ["600", "700"],
+  axes: ["opsz"],
 });
 
 const description = "Chat to check availability, get an exact quote and book Room A or Room B, with email confirmation.";
@@ -36,7 +38,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#f7f4ef",
+  themeColor: "#f7f6f3",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
