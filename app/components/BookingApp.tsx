@@ -4,7 +4,7 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@/lib/agent/events";
-import { BookingSheet, ProgressStrip } from "./BookingTicket";
+import { BookingTicket, ProgressStrip } from "./BookingTicket";
 import {
   AvailabilityCard,
   BookingFoundCard,
@@ -18,6 +18,7 @@ import {
   UnavailableCard,
 } from "./cards";
 import {
+  bookedIds,
   bookingProgress,
   detailsRequest,
   focusSlot,
@@ -31,6 +32,7 @@ import { AlertIcon, ArrowUpIcon, AssistantMark, CalendarIcon, ChevronRightIcon, 
 import { EASE, fadeUp, pressable, stagger } from "./motion";
 import { RichText } from "./RichText";
 import { RoomsAtAGlance } from "./RoomsAtAGlance";
+import { Schedule } from "./Schedule";
 import { SlotPicker, type PickerRequest } from "./SlotPicker";
 import { StepRow } from "./StepRow";
 import type { ChatMessage, Part, Schedule as ScheduleData } from "./types";
@@ -76,35 +78,55 @@ export function BookingApp() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [input, setInput] = useState("");
+  const [tab, setTab] = useState<"chat" | "booking">("chat");
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
+  const [thisWeek, setThisWeek] = useState<ScheduleData | null>(null);
+  const [week, setWeek] = useState(0);
   const [picker, setPicker] = useState<PickerRequest | null>(null);
-  const [ticketOpen, setTicketOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // ---- this week's availability, for the room cards ------------------------
-  const loadSchedule = useCallback(async () => {
+  // ---- schedule -----------------------------------------------------------
+  // The side panel can page through weeks; the room cards on the welcome
+  // screen always show this week, so they keep their own copy.
+  const loadSchedule = useCallback(async (w: number) => {
     try {
-      const res = await fetch("/api/schedule", { cache: "no-store" });
-      if (res.ok) setSchedule(await res.json());
+      const res = await fetch(`/api/schedule?week=${w}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as ScheduleData;
+      setSchedule(data);
+      if (w === 0) setThisWeek(data);
     } catch {
-      // The room cards are a shortcut; the chat works without them.
+      // The schedule is a nice-to-have; the chat works without it.
     }
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount; state is set after the request
-    void loadSchedule();
-  }, [loadSchedule]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on week change; state is set after the request
+    void loadSchedule(week);
+  }, [week, loadSchedule]);
 
   // ---- state derived from tool results ------------------------------------
   const parts = useMemo(() => toolParts(messages), [messages]);
   const progress = useMemo(() => bookingProgress(parts), [parts]);
   const focus = useMemo(() => focusSlot(parts), [parts]);
+  const highlightIds = useMemo(() => bookedIds(parts), [parts]);
   const quotes = useMemo(() => quoteStates(parts), [parts]);
   const quoteActive = [...quotes.values()].includes("active");
   const cancellations = useMemo(() => cancellationStates(parts), [parts]);
   const cancelActive = [...cancellations.values()].includes("active");
+
+  // Jump the schedule to the week the conversation is about.
+  useEffect(() => {
+    if (!focus?.date || !schedule) return;
+    const days = Math.round(
+      (Date.parse(`${focus.date}T00:00:00Z`) - Date.parse(`${schedule.today}T00:00:00Z`)) / 86_400_000,
+    );
+    const target = Math.min(Math.max(Math.floor(days / 7), 0), 25);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- follow the conversation
+    if (target !== week) setWeek(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the focus date changes
+  }, [focus?.date]);
 
   useEffect(() => {
     // The welcome screen starts at the top; only follow the conversation once it exists.
@@ -160,7 +182,7 @@ export function BookingApp() {
               ];
           return { ...m, parts: ps };
         });
-        if (event.ok && (event.name === "confirm_booking" || event.name === "confirm_cancellation")) void loadSchedule();
+        if (event.ok && (event.name === "confirm_booking" || event.name === "confirm_cancellation")) void loadSchedule(week);
         break;
       case "error":
         updateAssistant((m) => ({ ...m, error: event.message }));
@@ -175,6 +197,7 @@ export function BookingApp() {
     const text = raw.trim();
     if (!text || busy) return;
     setInput("");
+    setTab("chat");
     setBusy(true);
     setMessages((all) => [
       ...all,
@@ -216,7 +239,7 @@ export function BookingApp() {
       updateAssistant((m) => ({ ...m, error: "The connection dropped before the reply finished.", dropped: true }));
     } finally {
       setBusy(false);
-      void loadSchedule();
+      void loadSchedule(week);
       inputRef.current?.focus();
     }
   };
@@ -358,11 +381,32 @@ export function BookingApp() {
           </div>
         </header>
 
-        {/* What has been agreed so far; tap for the full booking details. */}
-        <ProgressStrip progress={progress} onOpen={() => setTicketOpen(true)} />
+        {/* Mobile tabs */}
+        <div className="border-b border-line bg-surface px-4 lg:hidden">
+          <div className="mx-auto flex max-w-6xl gap-5" role="group" aria-label="View">
+            {(
+              [
+                ["chat", "Chat"],
+                ["booking", "Booking & schedule"],
+              ] as const
+            ).map(([t, label]) => (
+              <button
+                key={t}
+                aria-pressed={tab === t}
+                onClick={() => setTab(t)}
+                className={`relative py-2.5 text-sm font-medium transition-colors ${tab === t ? "text-fg" : "text-fg-3"}`}
+              >
+                {label}
+                {tab === t && <motion.span layoutId="tab-underline" className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-ink" />}
+              </button>
+            ))}
+          </div>
+        </div>
+        {tab === "chat" && <ProgressStrip progress={progress} onOpen={() => setTab("booking")} />}
 
-        <main className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-4 sm:px-6">
-          <section className="flex min-h-0 flex-1 flex-col" aria-label="Chat">
+        <main className="mx-auto grid min-h-0 w-full max-w-6xl flex-1 grid-cols-[minmax(0,1fr)] gap-6 px-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_392px]">
+          {/* Chat */}
+          <section className={`min-h-0 flex-col ${tab === "chat" ? "flex" : "hidden"} lg:flex`} aria-label="Chat">
             <div className="flex-1 overflow-y-auto py-6">
               <div className="mx-auto max-w-2xl space-y-6" role="log" aria-live="polite" aria-label="Conversation">
                 <AnimatePresence initial={false}>
@@ -386,9 +430,9 @@ export function BookingApp() {
                         price, and email your confirmation once you accept it.
                       </motion.p>
 
-                      {schedule && (
+                      {thisWeek && (
                         <motion.div variants={fadeUp}>
-                          <RoomsAtAGlance schedule={schedule} onPick={setPicker} />
+                          <RoomsAtAGlance schedule={thisWeek} onPick={setPicker} />
                         </motion.div>
                       )}
 
@@ -582,9 +626,25 @@ export function BookingApp() {
               </p>
             </form>
           </section>
+
+          {/* Booking, schedule and pricing */}
+          <aside
+            className={`min-h-0 space-y-4 overflow-y-auto py-6 ${tab === "booking" ? "block" : "hidden"} lg:block`}
+            aria-label="Booking and schedule"
+          >
+            <BookingTicket progress={progress} steps={parts} />
+            <Schedule
+              schedule={schedule}
+              week={week}
+              onWeekChange={setWeek}
+              focus={focus}
+              highlightIds={highlightIds}
+              onPick={setPicker}
+            />
+            <PricingPanel />
+          </aside>
         </main>
       </div>
-      {ticketOpen && <BookingSheet progress={progress} steps={parts} onClose={() => setTicketOpen(false)} />}
       {picker && (
         <SlotPicker
           key={`${picker.date}-${picker.room}-${picker.start}`}
@@ -599,3 +659,45 @@ export function BookingApp() {
   );
 }
 
+function PricingPanel() {
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-4 shadow-card" aria-labelledby="pricing-heading">
+      <h2 id="pricing-heading" className="font-serif text-xl font-semibold text-fg">
+        Pricing
+      </h2>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-xl border border-line p-3">
+          <div className="text-[13px] font-medium text-fg-2">Under 4 hours</div>
+          <div className="num mt-1 font-serif text-2xl font-semibold text-fg">
+            $100<span className="font-sans text-sm font-medium text-fg-2">/hour</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-ok-border bg-ok-soft p-3">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[13px] font-medium text-ok">4 hours or more</span>
+            <span className="rounded-full bg-ok px-1.5 py-0.5 text-xs font-semibold leading-none text-on-ink">−15%</span>
+          </div>
+          <div className="num mt-1 font-serif text-2xl font-semibold text-fg">
+            $85<span className="font-sans text-sm font-medium text-fg-2">/hour</span>
+          </div>
+        </div>
+      </div>
+      <dl className="num mt-3 grid grid-cols-3 gap-2 text-center text-[13px]">
+        {[
+          ["3 hours", "$300"],
+          ["4 hours", "$340"],
+          ["5 hours", "$425"],
+        ].map(([h, p]) => (
+          <div key={h} className="rounded-lg bg-inset py-2">
+            <dt className="text-fg-3">{h}</dt>
+            <dd className="font-semibold text-fg">{p}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3 text-xs leading-relaxed text-fg-2">
+        Open 8am–10pm daily, in 30-minute steps with a 1-hour minimum. Prices are calculated by the booking system, not
+        the AI, so a quote is always exact.
+      </p>
+    </section>
+  );
+}
